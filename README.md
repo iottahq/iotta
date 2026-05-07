@@ -42,10 +42,16 @@ Works with n8n, Node-RED, Home Assistant, or anything that speaks HTTP.
 ## Quick start
 
 ```bash
-docker run -p 8080:8080 iottahq/iotta
+git clone https://github.com/iottahq/iotta.git
+cd iotta
+docker compose up --build
 ```
 
-Open [http://localhost:8080](http://localhost:8080) to access the dashboard.
+Open [http://localhost:8000](http://localhost:8000) to access the API.  
+Open [http://localhost:8000/docs](http://localhost:8000/docs) for the Swagger UI.
+
+> The one-liner `docker run iottahq/iotta` will be available once iotta reaches a stable release.
+> UI will be later added as well
 
 ---
 

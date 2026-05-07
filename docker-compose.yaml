@@ -1,0 +1,33 @@
+services:
+  backend:
+    build: ./app/backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app/backend/src:/app/src
+    environment:
+      - DB_USER=iotta
+      - DB_PASSWORD=iotta
+      - DB_NAME=iotta
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: iotta
+      POSTGRES_PASSWORD: iotta
+      POSTGRES_DB: iotta
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iotta"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
