@@ -1,0 +1,24 @@
+id: http
+scope: core
+name: HTTP / HTTPS
+version: 1.0.0
+description: >
+  Connect to any device that speaks HTTP or HTTPS.
+  Supports GET, POST, PUT, DELETE with bearer, basic, and api-key authentication.
+  Ideal for REST APIs, Shelly devices, Tasmota firmware, ESP32 projects, and webhooks.
+author:
+  name: Elias Bergmann
+  organisation: iottahq
+  url: https://github.com/iottahq
+license: Sustainable Use License
+tags:
+  - http
+  - https
+  - rest
+  - webhook
+dependencies:
+  protocols: []
+  pip:
+    - httpx>=0.27.0
+    - pyyaml>=6.0
+min_iotta_version: 0.1.0

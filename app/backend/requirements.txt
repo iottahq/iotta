@@ -1,2 +1,3 @@
 fastapi
 uvicorn[standard]
+packaging>=24.0
