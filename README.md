@@ -1,6 +1,6 @@
 # iotta.
 
-**Any device. One API.**
+**IoT to anyone. Any device. One API.**
 
 iotta is a self-hosted protocol gateway that turns any device into a unified REST API — no matter what protocol it speaks. MQTT, FTP, HTTP, WebSocket, and more.
 
