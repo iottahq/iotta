@@ -1,0 +1,23 @@
+id: ftp
+scope: core
+name: FTP / FTPS
+version: 1.0.0
+entry: main.py
+description: >
+  Connect to any device that exposes a filesystem over FTP or FTPS.
+  Supports plain FTP, explicit FTPS (STARTTLS), and implicit FTPS (port 990).
+  Handles devices with non-standard TLS close behavior (e.g. Bambu Lab printers).
+author:
+  name: Elias Bergmann
+  organisation: iottahq
+  url: https://github.com/iottahq
+license: Sustainable Use License
+tags:
+  - ftp
+  - ftps
+  - filesystem
+  - upload
+dependencies:
+  protocols: []
+  pip: []
+min_iotta_version: 0.1.0
