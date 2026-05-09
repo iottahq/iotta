@@ -1,10 +1,10 @@
 services:
   backend:
-    build: ./app/backend
+    build: ./packages/backend
     ports:
       - "8000:8000"
     volumes:
-      - ./app/backend/src:/app/src
+      - ./packages/backend/src:/app/src
       - ./plugins:/plugins
     environment:
       - DB_USER=iotta
