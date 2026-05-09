@@ -1,5 +1,6 @@
 id: http
 scope: core
+entry: main.py
 name: HTTP / HTTPS
 version: 1.0.0
 description: >

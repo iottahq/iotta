@@ -75,7 +75,6 @@ def _ensure_pip_dependencies(deps: list[str], plugin_name: str) -> bool:
                 sys.executable, "-m", "pip", "install",
                 "--quiet",
                 "--root-user-action=ignore",
-                "--disable-pip-version-check",
                 *missing,
             ],
             check=True,
@@ -116,11 +115,20 @@ class PluginLoader:
         for protocol_dir in sorted(PROTOCOLS_DIR.iterdir()):
             if not protocol_dir.is_dir():
                 continue
-            plugin_file   = protocol_dir / "plugin.py"
             manifest_file = protocol_dir / "plugin.yaml"
 
+            if not manifest_file.exists():
+                logger.warning(f"No plugin.yaml in {protocol_dir.name}, skipping")
+                continue
+
+            with open(manifest_file, "r") as f:
+                meta_peek = yaml.safe_load(f) or {}
+
+            entry = meta_peek.get("entry", "main.py")
+            plugin_file = protocol_dir / entry
+
             if not plugin_file.exists():
-                logger.warning(f"No plugin.py in {protocol_dir.name}, skipping")
+                logger.warning(f"Entry file '{entry}' not found in {protocol_dir.name}, skipping")
                 continue
 
             self._load_protocol(protocol_dir.name, plugin_file, manifest_file)
@@ -265,7 +273,7 @@ class PluginLoader:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def load_all(self) -> None:
-        logger.info(f"loading plugins...")
+        logger.info(f"iotta v{IOTTA_VERSION} – loading plugins...")
         self.load_protocols()
         logger.info(f"Loaded {len(self._protocols)} protocol plugin(s): {list(self._protocols.keys())}")
         self.load_devices()

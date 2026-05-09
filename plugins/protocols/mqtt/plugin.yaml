@@ -1,0 +1,25 @@
+id: mqtt
+scope: core
+entry: main.py
+name: MQTT
+version: 1.0.0
+description: >
+  Connect to any device that communicates over MQTT.
+  Supports TLS, persistent connections, publish actions,
+  and real-time status updates via topic subscriptions.
+  Ideal for Bambu Lab printers, smart home devices, and IoT sensors.
+author:
+  name: Elias Bergmann
+  organisation: iottahq
+  url: https://github.com/iottahq
+license: Sustainable Use License
+tags:
+  - mqtt
+  - iot
+  - realtime
+  - pubsub
+dependencies:
+  protocols: []
+  pip:
+    - paho-mqtt>=2.0.0
+min_iotta_version: 0.1.0
