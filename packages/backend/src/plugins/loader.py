@@ -104,7 +104,7 @@ class PluginLoader:
         # device_id → parsed plugin.yaml dict
         self._devices: dict[str, dict] = {}
 
-    # ── Protocol plugins ──────────────────────────────────────────────────────
+    # Protocol plugins
 
     def load_protocols(self) -> None:
         """Scan plugins/protocols/ and register all valid protocol plugins."""
@@ -193,7 +193,7 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"Failed to load protocol plugin '{name}': {e}")
 
-    # ── Device plugins ────────────────────────────────────────────────────────
+    # Device plugins
 
     def load_devices(self) -> None:
         """Scan plugins/devices/ and load all valid device plugin manifests."""
@@ -212,6 +212,7 @@ class PluginLoader:
 
     def _load_device(self, device_id: str, manifest_file: Path) -> None:
         """Parse and validate a device plugin manifest."""
+        import json
         try:
             with open(manifest_file, "r") as f:
                 manifest = yaml.safe_load(f)
@@ -220,7 +221,7 @@ class PluginLoader:
                 logger.warning(f"Empty plugin.yaml in {device_id}, skipping")
                 return
 
-            for field in ("name", "version", "protocols"):
+            for field in ("name", "version"):
                 if field not in manifest:
                     logger.warning(f"Device plugin '{device_id}' missing field: {field}")
                     return
@@ -228,6 +229,17 @@ class PluginLoader:
             # Version check
             if not _check_min_version(manifest.get("min_iotta_version", ""), device_id):
                 return
+
+            # Load config.json if defined
+            config_file = manifest.get("config")
+            if config_file:
+                config_path = manifest_file.parent / config_file
+                if config_path.exists():
+                    with open(config_path, "r") as f:
+                        manifest["_config"] = json.load(f)
+                    logger.debug(f"Loaded config '{config_file}' for '{device_id}'")
+                else:
+                    logger.warning(f"Device plugin '{device_id}' config file '{config_file}' not found")
 
             # Protocol dependency check
             missing = [
@@ -250,7 +262,7 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"Failed to load device plugin '{device_id}': {e}")
 
-    # ── Hot-reload ────────────────────────────────────────────────────────────
+    # Hot-reload
 
     def reload_protocols(self) -> None:
         logger.info("Hot-reloading protocol plugins...")
@@ -270,7 +282,7 @@ class PluginLoader:
         self._devices.clear()
         self.load_all()
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # Public API
 
     def load_all(self) -> None:
         logger.info(f"iotta v{IOTTA_VERSION} – loading plugins...")
