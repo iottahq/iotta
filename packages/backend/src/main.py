@@ -8,6 +8,7 @@ from src.models import credential, device
 
 from src.routers.credentials import router as credentials_router
 from src.routers.devices import router as devices_router
+from src.device_manager import init_device_manager
 
 import logging
 
@@ -35,6 +36,8 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     print_banner()
     plugin_loader.load_all()
+    manager = init_device_manager(app)
+    await manager.mount_all()
     yield
 
 

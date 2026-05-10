@@ -5,21 +5,24 @@
       "type": "string",
       "label": "IP Address",
       "placeholder": "192.168.1.42",
-      "required": true
+      "required": true,
+      "example": "192.168.1.42"
     },
     {
       "field": "serial",
       "type": "string",
       "label": "Serial Number",
       "placeholder": "01S00C123456789",
-      "required": true
+      "required": true,
+      "example": "01S00C123456789"
     },
     {
       "field": "access_code",
       "type": "secret",
       "label": "Access Code",
       "placeholder": "12345678",
-      "required": true
+      "required": true,
+      "example": "12345678"
     }
   ],
 
@@ -95,6 +98,17 @@
           "timelapse":      { "type": "boolean", "default": false },
           "flow_cali":      { "type": "boolean", "default": false },
           "vibration_cali": { "type": "boolean", "default": false }
+        },
+        "example": {
+          "file_path": "/sdcard/3d_printer/cache/benchy.3mf",
+          "filename": "benchy.3mf",
+          "ams_slot": 0,
+          "plate": 1,
+          "plate_idx": 0,
+          "bed_leveling": true,
+          "timelapse": false,
+          "flow_cali": false,
+          "vibration_cali": false
         }
       },
 
@@ -104,7 +118,8 @@
         "topic": "device/{serial}/request",
         "payload": {
           "print": { "sequence_id": "1", "command": "pause" }
-        }
+        },
+        "example": {}
       },
 
       "resume": {
@@ -113,7 +128,8 @@
         "topic": "device/{serial}/request",
         "payload": {
           "print": { "sequence_id": "1", "command": "resume" }
-        }
+        },
+        "example": {}
       },
 
       "stop": {
@@ -122,7 +138,8 @@
         "topic": "device/{serial}/request",
         "payload": {
           "print": { "sequence_id": "1", "command": "stop" }
-        }
+        },
+        "example": {}
       },
 
       "home": {
@@ -131,7 +148,8 @@
         "topic": "device/{serial}/request",
         "payload": {
           "print": { "sequence_id": "1", "command": "gcode_line", "param": "G28 \n" }
-        }
+        },
+        "example": {}
       },
 
       "clear_error": {
@@ -140,7 +158,8 @@
         "topic": "device/{serial}/request",
         "payload": {
           "print": { "sequence_id": "1", "command": "clean_print_error" }
-        }
+        },
+        "example": {}
       },
 
       "light": {
@@ -161,6 +180,9 @@
         },
         "input": {
           "mode": { "type": "string", "default": "on", "enum": ["on", "off", "flashing"] }
+        },
+        "example": {
+          "mode": "on"
         }
       },
 
@@ -171,6 +193,9 @@
         "input": {
           "path": { "type": "string", "required": true },
           "data": { "type": "bytes",  "required": true }
+        },
+        "example": {
+          "path": "/sdcard/3d_printer/cache/benchy.3mf"
         }
       },
 
@@ -180,6 +205,9 @@
         "method": "delete",
         "input": {
           "path": { "type": "string", "required": true }
+        },
+        "example": {
+          "path": "/sdcard/3d_printer/cache/benchy.3mf"
         }
       }
     },
@@ -192,7 +220,8 @@
         "auth": {
           "username": "bblp",
           "password": "{access_code}"
-        }
+        },
+        "example": {}
       },
 
       "files": {
@@ -201,6 +230,9 @@
         "method": "list",
         "input": {
           "path": { "type": "string", "default": "/" }
+        },
+        "example": {
+          "path": "/"
         }
       }
     },

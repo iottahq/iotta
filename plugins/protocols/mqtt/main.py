@@ -57,7 +57,8 @@ class MQTTProtocol(BaseProtocol):
 
     async def disconnect(self) -> None:
         if self._client:
-            self._client.loop_stop()
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._client.loop_stop)
             try:
                 self._client.disconnect()
             except Exception:
@@ -87,6 +88,7 @@ class MQTTProtocol(BaseProtocol):
                 json.dumps(message),
                 qos=payload.get("qos", 1),
             )
+            await asyncio.sleep(0.5)
             return {"success": result.rc == mqtt.MQTT_ERR_SUCCESS}
         except Exception as e:
             return {"success": False, "error": str(e)}
