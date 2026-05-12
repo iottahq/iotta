@@ -17,7 +17,9 @@ class BaseProtocol(ABC):
     - connect/disconnect to a device using a specific protocol
     - execute actions (publish, write, POST, ...)
     - subscribe to status updates and emit them via callback
+    - ping to check liveness
     """
+
 
     # Must be set in every protocol plugin
     protocol_name: str = ""
@@ -61,6 +63,19 @@ class BaseProtocol(ABC):
     def is_connected(self) -> bool:
         """Override in subclass if connection state is trackable."""
         return False
+
+    async def ping(self) -> dict:
+        """
+        Check if the protocol connection is alive.
+        Returns { "ok": bool, "latency_ms": float | None, "error": str | None }
+        Override in subclass for a protocol-specific liveness check.
+        Default: uses is_connected.
+        """
+        return {
+            "ok": self.is_connected,
+            "latency_ms": None,
+            "error": None if self.is_connected else "Not connected",
+        }
 
     def __repr__(self) -> str:
         return f"<Protocol: {self.protocol_name}>"
