@@ -229,7 +229,7 @@
         "label": "List Files",
         "method": "list",
         "input": {
-          "path": { "type": "string", "default": "/" }
+          "path": { "type": "string"}
         },
         "example": {
           "path": "/"

@@ -19,5 +19,6 @@ tags:
   - upload
 dependencies:
   protocols: []
-  pip: []
+  pip:
+    - aioftp>=0.21.0
 min_iotta_version: 0.1.0

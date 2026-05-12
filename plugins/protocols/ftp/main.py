@@ -1,17 +1,19 @@
 """
 main.py – FTP/FTPS protocol plugin for iotta.
 
+Uses aioftp for async-native FTP/FTPS support.
 Supports plain FTP, explicit FTPS (STARTTLS), and implicit FTPS (port 990).
-Bambu Lab printers use implicit FTPS on port 990 with a quirky TLS close.
+
+Connection strategy: connect-per-operation.
+Every action opens a fresh connection, executes, then closes it.
 """
 
 import asyncio
-import ftplib
-import io
-import socket
 import ssl
+import time
 from typing import Callable
 
+import aioftp
 from src.logging import get_logger
 from src.plugins.base_protocol import BaseProtocol
 
@@ -21,46 +23,11 @@ CONNECT_TIMEOUT = 8
 OP_TIMEOUT = 120
 
 
-class ImplicitFTP_TLS(ftplib.FTP_TLS):
-    """
-    Implicit FTPS – TLS is active immediately on connect (no STARTTLS).
-    Required for devices like Bambu Lab printers that use port 990.
-    """
-
-    def connect(
-        self, host: str, port: int = 990, timeout: int = CONNECT_TIMEOUT, **kwargs
-    ):
-        self.host = host
-        self.port = port
-        self.timeout = timeout
-
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-
-        sock = socket.create_connection((host, port), timeout=timeout)
-        sock.settimeout(timeout)
-
-        self.sock = ctx.wrap_socket(sock, server_hostname=host)
-        self.af = self.sock.family
-        self.file = self.sock.makefile("r", encoding="utf-8", errors="replace")
-        self.welcome = self.getresp()
-
-        return self.welcome
-
-    def quit_safe(self):
-        """
-        Some devices (e.g. Bambu Lab) don't close TLS cleanly.
-        Force-close the socket instead of waiting for a proper QUIT response.
-        """
-        try:
-            self.voidcmd("QUIT")
-        except Exception:
-            pass
-        try:
-            self.sock.close()
-        except Exception:
-            pass
+def _make_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 
 class FTPProtocol(BaseProtocol):
@@ -68,139 +35,123 @@ class FTPProtocol(BaseProtocol):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self._ftp: ftplib.FTP | None = None
 
     # ── Connection ────────────────────────────────────────────────────────────
 
     async def connect(self) -> bool:
-        loop = asyncio.get_event_loop()
+        """Probe once at startup to verify reachability."""
         try:
-            await asyncio.wait_for(
-                loop.run_in_executor(None, self._connect_sync),
-                timeout=CONNECT_TIMEOUT + 2,
-            )
+            async with asyncio.timeout(CONNECT_TIMEOUT + 2):
+                async with self._open() as client:
+                    pass
             logger.info(f"Connected to {self.config.get('host')}")
             return True
-        except asyncio.TimeoutError:
-            logger.error("Connection timeout")
-            return False
         except Exception as e:
             logger.error(f"Connect failed: {e}")
             return False
 
-    def _connect_sync(self):
-        host = self.config.get("host")
-        port = int(self.config.get("port", 21))
-        username = self.config.get("username", "anonymous")
-        password = self.config.get("password", "")
-        tls = self.config.get("tls", "none")  # none | implicit | explicit
-
-        if tls == "implicit":
-            ftp = ImplicitFTP_TLS()
-            ftp.connect(host, port, timeout=CONNECT_TIMEOUT)
-            ftp.login(username, password)
-            ftp.prot_p()
-            ftp.set_pasv(True)
-            ftp.sock.settimeout(OP_TIMEOUT)
-        elif tls == "explicit":
-            ftp = ftplib.FTP_TLS()
-            ftp.connect(host, port, timeout=CONNECT_TIMEOUT)
-            ftp.login(username, password)
-            ftp.prot_p()
-        else:
-            ftp = ftplib.FTP()
-            ftp.connect(host, port, timeout=CONNECT_TIMEOUT)
-            ftp.login(username, password)
-
-        self._ftp = ftp
-
     async def disconnect(self) -> None:
-        if self._ftp:
-            try:
-                if isinstance(self._ftp, ImplicitFTP_TLS):
-                    self._ftp.quit_safe()
-                else:
-                    self._ftp.quit()
-            except Exception:
-                pass
-            self._ftp = None
+        pass
 
     @property
     def is_connected(self) -> bool:
-        return self._ftp is not None
+        return True
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
     async def execute_action(self, action: str, payload: dict) -> dict:
-        if not self._ftp:
-            return {"success": False, "error": "Not connected"}
-
-        loop = asyncio.get_event_loop()
         try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, self._execute_sync, action, payload),
-                timeout=OP_TIMEOUT,
-            )
-            return result
-        except asyncio.TimeoutError:
+            async with asyncio.timeout(OP_TIMEOUT):
+                return await self._run_action(action, payload)
+        except TimeoutError:
             return {"success": False, "error": "FTP operation timeout"}
         except Exception as e:
+            logger.error(f"Action '{action}' failed: {e}")
             return {"success": False, "error": str(e)}
 
-    def _execute_sync(self, action: str, payload: dict) -> dict:
+    async def _run_action(self, action: str, payload: dict) -> dict:
         path = payload.get("path", "/")
 
-        if action == "list":
-            lines = []
-            self._ftp.retrlines(f"LIST {path}", lines.append)
-            return {"success": True, "files": self._parse_list(lines), "path": path}
+        async with self._open() as client:
+            if action == "list":
+                files = []
+                async for item_path, info in client.list(path):
+                    name = item_path.name
+                    if name in (".", ".."):
+                        continue
+                    files.append(
+                        {
+                            "name": name,
+                            "type": info.get("type", "file"),
+                            "size": int(info.get("size", 0)),
+                            "date": info.get("modify", ""),
+                        }
+                    )
+                return {"success": True, "files": files, "path": path}
 
-        elif action == "upload":
-            local_data = payload.get("data")  # bytes
-            if not local_data:
-                return {"success": False, "error": "No data provided"}
-            self._ftp.storbinary(f"STOR {path}", io.BytesIO(local_data))
-            return {"success": True, "path": path}
+            elif action == "upload":
+                data = payload.get("data")
+                if not data:
+                    return {"success": False, "error": "No data provided"}
+                async with client.upload_stream(path) as stream:
+                    await stream.write(data)
+                return {"success": True, "path": path}
 
-        elif action == "download":
-            buf = io.BytesIO()
-            self._ftp.retrbinary(f"RETR {path}", buf.write)
-            return {"success": True, "data": buf.getvalue()}
+            elif action == "download":
+                buf = bytearray()
+                async with client.download_stream(path) as stream:
+                    async for chunk in stream.iter_by_block():
+                        buf.extend(chunk)
+                return {"success": True, "data": bytes(buf)}
 
-        elif action == "delete":
-            self._ftp.delete(path)
-            return {"success": True, "path": path}
+            elif action == "delete":
+                await client.remove(path)
+                return {"success": True, "path": path}
 
-        elif action == "mkdir":
-            self._ftp.mkd(path)
-            return {"success": True, "path": path}
+            elif action == "mkdir":
+                await client.make_directory(path)
+                return {"success": True, "path": path}
 
-        else:
-            return {"success": False, "error": f"Unknown action: {action}"}
+            else:
+                return {"success": False, "error": f"Unknown action: {action}"}
 
-    # ── Status ────────────────────────────────────────────────────────────────
+    # ── Ping ──────────────────────────────────────────────────────────────────
+
+    async def ping(self) -> dict:
+        t0 = time.monotonic()
+        try:
+            async with asyncio.timeout(CONNECT_TIMEOUT + 2):
+                async with self._open() as client:
+                    pass
+            latency_ms = round((time.monotonic() - t0) * 1000, 1)
+            return {"ok": True, "latency_ms": latency_ms, "error": None}
+        except Exception as e:
+            return {"ok": False, "latency_ms": None, "error": str(e)}
+
+    # ── Subscribe ─────────────────────────────────────────────────────────────
 
     async def subscribe(self, callback: Callable[[dict], None]) -> None:
         """FTP is stateless – no push subscriptions possible."""
-        logger.debug("FTP protocol does not support push subscriptions")
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
-    def _parse_list(self, lines: list[str]) -> list[dict]:
-        files = []
-        for line in lines:
-            parts = line.split(None, 8)
-            if len(parts) < 9:
-                continue
-            name = parts[8]
-            if name in (".", ".."):
-                continue
-            files.append(
-                {
-                    "name": name,
-                    "type": "dir" if parts[0].startswith("d") else "file",
-                    "size": int(parts[4]) if parts[4].isdigit() else 0,
-                    "date": f"{parts[5]} {parts[6]} {parts[7]}",
-                }
-            )
-        return files
+    def _open(self) -> aioftp.Client:
+        host = self.config.get("host")
+        port = int(self.config.get("port", 21))
+        username = self.config.get("username", "anonymous")
+        password = self.config.get("password", "")
+        tls = self.config.get("tls", "none")
+
+        ssl_ctx = _make_ssl_context() if tls in ("implicit", "explicit") else None
+
+        return aioftp.Client.context(
+            host,
+            port=port,
+            user=username,
+            password=password,
+            ssl=ssl_ctx,
+            connection_timeout=CONNECT_TIMEOUT,
+        )
+
+    def _parse_date(self, info: dict) -> str:
+        return info.get("modify", "")

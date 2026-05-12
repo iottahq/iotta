@@ -14,7 +14,7 @@ Protocol connections are persistent per device – no connect/disconnect per req
 import asyncio
 from uuid import UUID
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from src.database import SessionLocal
@@ -32,7 +32,7 @@ class DeviceConnections:
 
     def __init__(self):
         self._connections: dict[str, BaseProtocol] = {}
-        self._configs: dict[str, tuple] = {}  # protocol_id → (class, config)
+        self._configs: dict[str, tuple] = {}
 
     async def connect(
         self, protocol_id: str, protocol_class: type[BaseProtocol], config: dict
@@ -209,12 +209,7 @@ class DeviceManager:
         dlog.info(f"Mounted: {device.name} at {mount_path}")
 
     def _build_sub_app(
-        self,
-        device: Device,
-        config: dict,
-        credentials: dict,
-        connections: DeviceConnections,
-        plugin: dict,
+        self, device, config, credentials, connections, plugin
     ) -> FastAPI:
         meta = {k: v for k, v in plugin.items() if not k.startswith("_")}
 
@@ -233,7 +228,7 @@ class DeviceManager:
 
         for action_name, action_def in actions.get("request", {}).items():
             self._register_request(
-                sub_app, action_name, action_def, credentials, connections, config
+                sub_app, action_name, action_def, credentials, connections
             )
 
         for action_name, action_def in actions.get("stream", {}).items():
@@ -255,10 +250,11 @@ class DeviceManager:
 
             for protocol_id in connections._configs.keys():
                 protocol = connections._connections.get(protocol_id)
-                if protocol:
-                    result = await protocol.ping()
-                else:
-                    result = {"ok": False, "latency_ms": None, "error": "Not connected"}
+                result = (
+                    await protocol.ping()
+                    if protocol
+                    else {"ok": False, "latency_ms": None, "error": "Not connected"}
+                )
                 results[protocol_id] = result
                 if not result.get("ok"):
                     all_ok = False
@@ -340,11 +336,14 @@ class DeviceManager:
 
         send_action.__name__ = f"send_{name}"
 
-    def _register_request(self, app, name, action, credentials, connections, config):
+    def _register_request(self, app, name, action, credentials, connections):
         label = action.get("label", name)
+        default_path = action.get("input", {}).get("path", {}).get("default")
 
         @app.get(f"/request/{name}", summary=label, tags=["request"])
-        async def request_action():
+        async def request_action(
+            path: str = Query(default=None, description="Directory or file path"),
+        ):
             protocol_id = action.get("protocol")
             if protocol_id == "camera":
                 return JSONResponse(
@@ -362,7 +361,7 @@ class DeviceManager:
                 )
             return await protocol.execute_action(
                 action.get("method", name),
-                {"path": action.get("input", {}).get("path", {}).get("default", "/")},
+                {"path": path or default_path or "/"},
             )
 
         request_action.__name__ = f"request_{name}"

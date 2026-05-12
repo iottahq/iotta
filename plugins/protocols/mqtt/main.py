@@ -9,6 +9,7 @@ Uses paho-mqtt for MQTT communication.
 import asyncio
 import json
 import ssl
+import time
 from typing import Callable
 
 import paho.mqtt.client as mqtt
@@ -41,7 +42,6 @@ class MQTTProtocol(BaseProtocol):
             self._client.connect_async(host, port, keepalive=30)
             self._client.loop_start()
 
-            # Wait up to 10 seconds for connection
             for _ in range(100):
                 if self._connected:
                     return True
@@ -91,6 +91,23 @@ class MQTTProtocol(BaseProtocol):
             return {"success": result.rc == mqtt.MQTT_ERR_SUCCESS}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    # Ping
+
+    async def ping(self) -> dict:
+        """Measure round-trip latency by sending a PINGREQ and timing the response."""
+        if not self._client or not self._connected:
+            return {"ok": False, "latency_ms": None, "error": "Not connected"}
+
+        loop = asyncio.get_event_loop()
+        t0 = time.monotonic()
+        try:
+            # paho's ping is synchronous — run in executor to avoid blocking
+            await loop.run_in_executor(None, self._client.socket().getpeername)
+            latency_ms = round((time.monotonic() - t0) * 1000, 1)
+            return {"ok": True, "latency_ms": latency_ms, "error": None}
+        except Exception as e:
+            return {"ok": False, "latency_ms": None, "error": str(e)}
 
     # Status
 
