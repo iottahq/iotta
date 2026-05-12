@@ -15,27 +15,24 @@ to pick up new or updated plugins without restarting the server.
 
 import importlib
 import importlib.util
-import logging
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
 from packaging.version import Version
-
+from src.logging import get_logger
 from src.plugins.base_protocol import BaseProtocol
 from src.version import IOTTA_VERSION
 
-logger = logging.getLogger(__name__)
+logger = get_logger("core")
 
-PLUGINS_ROOT  = Path(os.getenv("IOTTA_PLUGINS_DIR", "/plugins"))
+PLUGINS_ROOT = Path(__import__("os").getenv("IOTTA_PLUGINS_DIR", "/plugins"))
 PROTOCOLS_DIR = PLUGINS_ROOT / "protocols"
-DEVICES_DIR   = PLUGINS_ROOT / "devices"
+DEVICES_DIR = PLUGINS_ROOT / "devices"
 
 
 def _check_min_version(min_version: str, plugin_name: str) -> bool:
-    """Verify that the current iotta version satisfies the plugin's minimum requirement."""
     if not min_version:
         return True
     try:
@@ -47,12 +44,13 @@ def _check_min_version(min_version: str, plugin_name: str) -> bool:
             return False
         return True
     except Exception:
-        logger.warning(f"Plugin '{plugin_name}' has invalid min_iotta_version: '{min_version}' – ignoring check")
+        logger.warning(
+            f"Plugin '{plugin_name}' has invalid min_iotta_version: '{min_version}' – ignoring check"
+        )
         return True
 
 
 def _ensure_pip_dependencies(deps: list[str], plugin_name: str) -> bool:
-    """Check and install missing pip dependencies for a plugin."""
     if not deps:
         return True
 
@@ -72,7 +70,10 @@ def _ensure_pip_dependencies(deps: list[str], plugin_name: str) -> bool:
     try:
         subprocess.run(
             [
-                sys.executable, "-m", "pip", "install",
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
                 "--quiet",
                 "--root-user-action=ignore",
                 *missing,
@@ -88,26 +89,22 @@ def _ensure_pip_dependencies(deps: list[str], plugin_name: str) -> bool:
 
 def _pip_to_import_name(package: str) -> str:
     mapping = {
-        "pyyaml":        "yaml",
-        "pillow":        "PIL",
+        "pyyaml": "yaml",
+        "pillow": "PIL",
         "python-dotenv": "dotenv",
-        "paho-mqtt":     "paho",
+        "paho-mqtt": "paho",
     }
     return mapping.get(package.lower(), package.lower())
 
 
 class PluginLoader:
     def __init__(self):
-        # protocol_id → { "class": BaseProtocol subclass, "meta": dict }
         self._protocols: dict[str, dict] = {}
-
-        # device_id → parsed plugin.yaml dict
         self._devices: dict[str, dict] = {}
 
     # Protocol plugins
 
     def load_protocols(self) -> None:
-        """Scan plugins/protocols/ and register all valid protocol plugins."""
         if not PROTOCOLS_DIR.exists():
             logger.warning(f"Protocols directory not found: {PROTOCOLS_DIR}")
             return
@@ -116,7 +113,6 @@ class PluginLoader:
             if not protocol_dir.is_dir():
                 continue
             manifest_file = protocol_dir / "plugin.yaml"
-
             if not manifest_file.exists():
                 logger.warning(f"No plugin.yaml in {protocol_dir.name}, skipping")
                 continue
@@ -128,37 +124,35 @@ class PluginLoader:
             plugin_file = protocol_dir / entry
 
             if not plugin_file.exists():
-                logger.warning(f"Entry file '{entry}' not found in {protocol_dir.name}, skipping")
+                logger.warning(
+                    f"Entry file '{entry}' not found in {protocol_dir.name}, skipping"
+                )
                 continue
 
             self._load_protocol(protocol_dir.name, plugin_file, manifest_file)
 
     def _load_protocol(self, name: str, plugin_file: Path, manifest_file: Path) -> None:
-        """Dynamically import a protocol plugin and register it."""
         try:
             meta = {}
             if manifest_file.exists():
                 with open(manifest_file, "r") as f:
                     meta = yaml.safe_load(f) or {}
-            else:
-                logger.warning(f"No plugin.yaml in {name}/ – metadata will be empty")
 
-            # Version check
             if not _check_min_version(meta.get("min_iotta_version", ""), name):
                 return
 
-            # pip dependencies
             pip_deps = meta.get("dependencies", {}).get("pip", [])
             if not _ensure_pip_dependencies(pip_deps, name):
-                logger.error(f"Skipping protocol plugin '{name}' due to missing dependencies")
+                logger.error(
+                    f"Skipping protocol plugin '{name}' due to missing dependencies"
+                )
                 return
 
-            # Remove cached module to force fresh import on reload
             module_key = f"iotta.protocols.{name}"
             if module_key in sys.modules:
                 del sys.modules[module_key]
 
-            spec   = importlib.util.spec_from_file_location(module_key, plugin_file)
+            spec = importlib.util.spec_from_file_location(module_key, plugin_file)
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_key] = module
             spec.loader.exec_module(module)
@@ -179,10 +173,7 @@ class PluginLoader:
 
             protocol_id = meta.get("id") or protocol_class.protocol_name or name
 
-            self._protocols[protocol_id] = {
-                "class": protocol_class,
-                "meta":  meta,
-            }
+            self._protocols[protocol_id] = {"class": protocol_class, "meta": meta}
 
             logger.info(
                 f"Loaded protocol plugin: {meta.get('name', protocol_id)} "
@@ -196,7 +187,6 @@ class PluginLoader:
     # Device plugins
 
     def load_devices(self) -> None:
-        """Scan plugins/devices/ and load all valid device plugin manifests."""
         if not DEVICES_DIR.exists():
             logger.warning(f"Devices directory not found: {DEVICES_DIR}")
             return
@@ -211,8 +201,8 @@ class PluginLoader:
             self._load_device(device_dir.name, manifest_file)
 
     def _load_device(self, device_id: str, manifest_file: Path) -> None:
-        """Parse and validate a device plugin manifest."""
         import json
+
         try:
             with open(manifest_file, "r") as f:
                 manifest = yaml.safe_load(f)
@@ -223,14 +213,14 @@ class PluginLoader:
 
             for field in ("name", "version"):
                 if field not in manifest:
-                    logger.warning(f"Device plugin '{device_id}' missing field: {field}")
+                    logger.warning(
+                        f"Device plugin '{device_id}' missing field: {field}"
+                    )
                     return
 
-            # Version check
             if not _check_min_version(manifest.get("min_iotta_version", ""), device_id):
                 return
 
-            # Load config.json if defined
             config_file = manifest.get("config")
             if config_file:
                 config_path = manifest_file.parent / config_file
@@ -239,11 +229,13 @@ class PluginLoader:
                         manifest["_config"] = json.load(f)
                     logger.debug(f"Loaded config '{config_file}' for '{device_id}'")
                 else:
-                    logger.warning(f"Device plugin '{device_id}' config file '{config_file}' not found")
+                    logger.warning(
+                        f"Device plugin '{device_id}' config file '{config_file}' not found"
+                    )
 
-            # Protocol dependency check
             missing = [
-                p for p in manifest.get("dependencies", {}).get("protocols", [])
+                p
+                for p in manifest.get("dependencies", {}).get("protocols", [])
                 if p not in self._protocols
             ]
             if missing:
@@ -287,9 +279,13 @@ class PluginLoader:
     def load_all(self) -> None:
         logger.info(f"iotta v{IOTTA_VERSION} – loading plugins...")
         self.load_protocols()
-        logger.info(f"Loaded {len(self._protocols)} protocol plugin(s): {list(self._protocols.keys())}")
+        logger.info(
+            f"Loaded {len(self._protocols)} protocol plugin(s): {list(self._protocols.keys())}"
+        )
         self.load_devices()
-        logger.info(f"Loaded {len(self._devices)} device plugin(s): {list(self._devices.keys())}")
+        logger.info(
+            f"Loaded {len(self._devices)} device plugin(s): {list(self._devices.keys())}"
+        )
 
     def get_protocol_class(self, protocol_id: str) -> type[BaseProtocol] | None:
         entry = self._protocols.get(protocol_id)
@@ -303,16 +299,10 @@ class PluginLoader:
         return self._devices.get(device_id)
 
     def all_protocols(self) -> list[dict]:
-        return [
-            {**entry["meta"], "id": pid}
-            for pid, entry in self._protocols.items()
-        ]
+        return [{**entry["meta"], "id": pid} for pid, entry in self._protocols.items()]
 
     def all_devices(self) -> list[dict]:
-        return [
-            {**manifest, "id": did}
-            for did, manifest in self._devices.items()
-        ]
+        return [{**manifest, "id": did} for did, manifest in self._devices.items()]
 
 
 # Singleton

@@ -12,19 +12,19 @@ Protocol connections are persistent per device – no connect/disconnect per req
 """
 
 import asyncio
-import logging
 from uuid import UUID
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from src.database import SessionLocal
+from src.logging import get_logger
 from src.models.credential import Credential
 from src.models.device import Device
 from src.plugins.base_protocol import BaseProtocol
 from src.plugins.loader import plugin_loader
 
-logger = logging.getLogger(__name__)
+logger = get_logger("core")
 
 
 class DeviceConnections:
@@ -40,7 +40,6 @@ class DeviceConnections:
         if protocol_id in self._connections:
             return self._connections[protocol_id]
 
-        # Always store config so ping can report on unconfigured protocols
         self._configs[protocol_id] = (protocol_class, config)
 
         protocol = protocol_class(config)
@@ -58,13 +57,11 @@ class DeviceConnections:
     async def reconnect(
         self, protocol_id: str, protocol_class=None, config: dict = None
     ) -> bool:
-        """Reconnect a single protocol. Uses stored config if not provided."""
         if protocol_class is None or config is None:
             if protocol_id not in self._configs:
                 return False
             protocol_class, config = self._configs[protocol_id]
 
-        # Clean up old connection
         if protocol_id in self._connections:
             try:
                 await self._connections[protocol_id].disconnect()
@@ -94,6 +91,7 @@ class DeviceManager:
         self._root_app = root_app
         self._apps: dict[str, FastAPI] = {}
         self._connections: dict[str, DeviceConnections] = {}
+        self._plugin_ids: dict[str, str] = {}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -107,7 +105,6 @@ class DeviceManager:
         finally:
             db.close()
 
-        # Start background reconnect task
         asyncio.create_task(self._reconnect_loop())
 
     async def _reconnect_loop(self) -> None:
@@ -115,7 +112,9 @@ class DeviceManager:
         while True:
             await asyncio.sleep(30)
             for device_id, connections in self._connections.items():
-                # Check all configured protocols – not just currently connected ones
+                plugin_id = self._plugin_ids.get(device_id, "device")
+                dlog = get_logger(plugin_id, device_id=device_id)
+
                 for protocol_id in list(connections._configs.keys()):
                     protocol = connections._connections.get(protocol_id)
                     if protocol:
@@ -125,18 +124,14 @@ class DeviceManager:
                         is_down = True
 
                     if is_down:
-                        logger.warning(
-                            f"Device {device_id} protocol '{protocol_id}' is down – reconnecting..."
+                        dlog.warning(
+                            f"Protocol '{protocol_id}' is down – reconnecting..."
                         )
                         ok = await connections.reconnect(protocol_id)
                         if ok:
-                            logger.info(
-                                f"Device {device_id} protocol '{protocol_id}' reconnected"
-                            )
+                            dlog.info(f"Protocol '{protocol_id}' reconnected")
                         else:
-                            logger.error(
-                                f"Device {device_id} protocol '{protocol_id}' reconnect failed"
-                            )
+                            dlog.error(f"Protocol '{protocol_id}' reconnect failed")
 
     async def mount(self, device_id: UUID) -> None:
         db: Session = SessionLocal()
@@ -149,6 +144,9 @@ class DeviceManager:
 
     async def unmount(self, device_id: UUID) -> None:
         key = str(device_id)
+        plugin_id = self._plugin_ids.get(key, "device")
+        dlog = get_logger(plugin_id, device_id=key)
+
         if key in self._connections:
             await self._connections[key].disconnect_all()
             del self._connections[key]
@@ -160,30 +158,31 @@ class DeviceManager:
                 if not (hasattr(r, "path") and r.path == mount_path)
             ]
             del self._apps[key]
-            logger.info(f"Unmounted device app: {key}")
+            self._plugin_ids.pop(key, None)
+            dlog.info("Unmounted")
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
     async def _mount_device(self, device: Device, db: Session) -> None:
         device_id = str(device.id)
+        plugin_id = device.plugin_id
+        dlog = get_logger(plugin_id, device_id=device_id)
 
-        plugin = plugin_loader.get_device(device.plugin_id)
+        plugin = plugin_loader.get_device(plugin_id)
         if not plugin:
-            logger.warning(
-                f"Device {device_id} references unknown plugin '{device.plugin_id}' – skipping"
-            )
+            dlog.warning(f"Unknown plugin '{plugin_id}' – skipping")
             return
 
         config = plugin.get("_config", {})
         if not config:
-            logger.warning(f"Device {device_id} has no config – skipping")
+            dlog.warning("No config – skipping")
             return
 
         credential = (
             db.query(Credential).filter(Credential.id == device.credential_id).first()
         )
         if not credential:
-            logger.warning(f"Device {device_id} has no credentials – skipping")
+            dlog.warning("No credentials – skipping")
             return
 
         resolved_protocols = {
@@ -198,6 +197,7 @@ class DeviceManager:
                 await connections.connect(proto_id, protocol_class, proto_config)
 
         self._connections[device_id] = connections
+        self._plugin_ids[device_id] = plugin_id
 
         sub_app = self._build_sub_app(
             device, config, credential.data, connections, plugin
@@ -206,7 +206,7 @@ class DeviceManager:
         self._root_app.mount(mount_path, sub_app)
         self._apps[device_id] = sub_app
 
-        logger.info(f"Mounted device: {device.name} ({device_id}) at {mount_path}")
+        dlog.info(f"Mounted: {device.name} at {mount_path}")
 
     def _build_sub_app(
         self,
@@ -253,7 +253,6 @@ class DeviceManager:
             results = {}
             all_ok = True
 
-            # Check all configured protocols – including ones that failed to connect
             for protocol_id in connections._configs.keys():
                 protocol = connections._connections.get(protocol_id)
                 if protocol:
@@ -267,19 +266,9 @@ class DeviceManager:
             if not results:
                 all_ok = False
 
-            return {
-                "online": all_ok,
-                "protocols": results,
-            }
+            return {"online": all_ok, "protocols": results}
 
-    def _register_send(
-        self,
-        app: FastAPI,
-        name: str,
-        action: dict,
-        credentials: dict,
-        connections: DeviceConnections,
-    ):
+    def _register_send(self, app, name, action, credentials, connections):
         from fastapi import File, Form, UploadFile
 
         label = action.get("label", name)
@@ -307,14 +296,9 @@ class DeviceManager:
                         status_code=503,
                     )
                 data = await file.read()
-                result = await protocol.execute_action(
-                    action.get("method", name),
-                    {
-                        "path": path,
-                        "data": data,
-                    },
+                return await protocol.execute_action(
+                    action.get("method", name), {"path": path, "data": data}
                 )
-                return result
         else:
 
             @app.post(
@@ -346,44 +330,27 @@ class DeviceManager:
                 resolved_payload = _resolve(
                     action.get("payload", {}), {**credentials, **body}
                 )
-                result = await protocol.execute_action(
+                return await protocol.execute_action(
                     action.get("method", name),
                     {
                         "topic": _resolve_str(action.get("topic", ""), credentials),
                         "payload": resolved_payload,
                     },
                 )
-                return result
 
         send_action.__name__ = f"send_{name}"
 
-    def _register_request(
-        self,
-        app: FastAPI,
-        name: str,
-        action: dict,
-        credentials: dict,
-        connections: DeviceConnections,
-        config: dict,
-    ):
+    def _register_request(self, app, name, action, credentials, connections, config):
         label = action.get("label", name)
-        example = action.get("example", {})
 
-        @app.get(
-            f"/request/{name}",
-            summary=label,
-            tags=["request"],
-        )
+        @app.get(f"/request/{name}", summary=label, tags=["request"])
         async def request_action():
             protocol_id = action.get("protocol")
-
             if protocol_id == "camera":
-                pass  # camera not yet implemented
                 return JSONResponse(
                     {"success": False, "error": "Camera not yet implemented"},
                     status_code=501,
                 )
-
             protocol = connections.get(protocol_id)
             if not protocol:
                 return JSONResponse(
@@ -393,38 +360,22 @@ class DeviceManager:
                     },
                     status_code=503,
                 )
-
-            result = await protocol.execute_action(
+            return await protocol.execute_action(
                 action.get("method", name),
-                {
-                    "path": action.get("input", {}).get("path", {}).get("default", "/"),
-                },
+                {"path": action.get("input", {}).get("path", {}).get("default", "/")},
             )
-            return result
 
         request_action.__name__ = f"request_{name}"
 
-    def _register_stream(
-        self,
-        app: FastAPI,
-        name: str,
-        action: dict,
-        credentials: dict,
-        connections: DeviceConnections,
-    ):
-        label = action.get("label", name)
-
+    def _register_stream(self, app, name, action, credentials, connections):
         @app.websocket(f"/stream/{name}")
         async def stream_action(websocket: WebSocket):
             await websocket.accept()
-
             protocol_id = action.get("protocol")
             protocol = connections.get(protocol_id)
-
             if not protocol:
                 await websocket.close(code=1008)
                 return
-
             try:
 
                 async def on_message(data: dict):
@@ -434,7 +385,6 @@ class DeviceManager:
                         pass
 
                 await protocol.subscribe(on_message)
-
                 while True:
                     try:
                         await asyncio.wait_for(websocket.receive_text(), timeout=30)
@@ -442,7 +392,6 @@ class DeviceManager:
                         await websocket.send_json({"ping": True})
                     except WebSocketDisconnect:
                         break
-
             finally:
                 await protocol.subscribe(lambda _: None)
 

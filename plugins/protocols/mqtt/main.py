@@ -1,5 +1,5 @@
 """
-plugin.py – MQTT protocol plugin for iotta.
+main.py – MQTT protocol plugin for iotta.
 
 Supports TLS (insecure), persistent connection, publish actions,
 and subscribe to status topics with callback emission.
@@ -8,15 +8,14 @@ Uses paho-mqtt for MQTT communication.
 
 import asyncio
 import json
-import logging
 import ssl
 from typing import Callable
 
 import paho.mqtt.client as mqtt
-
+from src.logging import get_logger
 from src.plugins.base_protocol import BaseProtocol
 
-logger = logging.getLogger(__name__)
+logger = get_logger("mqtt")
 
 
 class MQTTProtocol(BaseProtocol):
@@ -48,11 +47,11 @@ class MQTTProtocol(BaseProtocol):
                     return True
                 await asyncio.sleep(0.1)
 
-            logger.error(f"MQTT connection timeout to {host}:{port}")
+            logger.error(f"Connection timeout to {host}:{port}")
             return False
 
         except Exception as e:
-            logger.error(f"MQTT connect failed: {e}")
+            logger.error(f"Connect failed: {e}")
             return False
 
     async def disconnect(self) -> None:
@@ -101,7 +100,7 @@ class MQTTProtocol(BaseProtocol):
         if self._client and self._connected and topics:
             for topic in topics:
                 self._client.subscribe(topic)
-                logger.info(f"MQTT subscribed to: {topic}")
+                logger.info(f"Subscribed to: {topic}")
 
     # Client builder
 
@@ -120,9 +119,9 @@ class MQTTProtocol(BaseProtocol):
             client.tls_set_context(ctx)
             client.tls_insecure_set(True)
 
-        client.on_connect    = self._on_connect
+        client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
-        client.on_message    = self._on_message
+        client.on_message = self._on_message
 
         return client
 
@@ -131,16 +130,15 @@ class MQTTProtocol(BaseProtocol):
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         if rc == 0:
             self._connected = True
-            logger.info(f"MQTT connected to {self.config.get('host')}")
-            # Re-subscribe after reconnect
+            logger.info(f"Connected to {self.config.get('host')}")
             for topic in self.config.get("subscribe_topics", []):
                 client.subscribe(topic)
         else:
-            logger.warning(f"MQTT connection refused, rc={rc}")
+            logger.warning(f"Connection refused, rc={rc}")
 
     def _on_disconnect(self, client, userdata, rc, properties=None, reasoncode=None):
         self._connected = False
-        logger.info(f"MQTT disconnected (rc={rc})")
+        logger.info(f"Disconnected (rc={rc})")
 
     def _on_message(self, client, userdata, msg):
         if not self._callback:

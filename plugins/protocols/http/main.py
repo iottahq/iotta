@@ -1,18 +1,17 @@
 """
-plugin.py – HTTP protocol plugin for iotta.
+main.py – HTTP protocol plugin for iotta.
 
 Supports GET, POST, PUT, DELETE with optional auth (bearer, basic, api-key).
 Uses httpx for async HTTP requests.
 """
 
-import logging
 from typing import Any, Callable
 
 import httpx
-
+from src.logging import get_logger
 from src.plugins.base_protocol import BaseProtocol
 
-logger = logging.getLogger(__name__)
+logger = get_logger("http")
 
 
 class HTTPProtocol(BaseProtocol):
@@ -32,10 +31,10 @@ class HTTPProtocol(BaseProtocol):
                 headers=self._build_headers(),
                 verify=self.config.get("verify_ssl", True),
             )
-            logger.info(f"HTTP client ready for {self.config.get('base_url')}")
+            logger.info(f"Client ready for {self.config.get('base_url')}")
             return True
         except Exception as e:
-            logger.error(f"HTTP connect failed: {e}")
+            logger.error(f"Connect failed: {e}")
             return False
 
     async def disconnect(self) -> None:
@@ -75,13 +74,9 @@ class HTTPProtocol(BaseProtocol):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Status 
+    # Status
 
     async def subscribe(self, callback: Callable[[dict], None]) -> None:
-        """
-        HTTP is stateless – no persistent subscription possible.
-        Polling can be implemented at the device plugin level via plugin.yaml.
-        """
         logger.debug("HTTP protocol does not support push subscriptions")
 
     # Helpers
@@ -95,9 +90,6 @@ class HTTPProtocol(BaseProtocol):
             headers["Authorization"] = f"Bearer {auth.get('token', '')}"
         elif auth_type == "api-key":
             headers[auth.get("header", "X-API-Key")] = auth.get("key", "")
-        elif auth_type == "basic":
-            # httpx handles basic auth separately – see connect()
-            pass
 
         return headers
 

@@ -1,33 +1,29 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from src.routers.plugins import router as plugins_router
-from src.plugins.loader import plugin_loader
-from src.version import IOTTA_VERSION
-from src.database import Base, engine
-from src.models import credential, device
 
+from fastapi import FastAPI
+from src.database import Base, engine
+from src.device_manager import init_device_manager
+from src.logging import get_logger, setup_logging
+from src.models import credential, device
+from src.plugins.loader import plugin_loader
 from src.routers.credentials import router as credentials_router
 from src.routers.devices import router as devices_router
-from src.device_manager import init_device_manager
+from src.routers.plugins import router as plugins_router
+from src.version import IOTTA_VERSION
 
-import logging
+setup_logging()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%H:%M:%S",
-)
+logger = get_logger("core")
 
-logger = logging.getLogger(__name__)
 
 def print_banner():
     logger.info(f"""
-    _       _   _        
-   (_)     | | | |       
-    _  ___ | |_| |_ __ _ 
-   | |/ _ \\| __| __/ _` |
+    _       _   _
+   (_)     | | | |
+    _  ___ | |_| |_ __ _
+   | |/ _ \| __| __/ _` |
    | | (_) | |_| || (_| |
-   |_|\\___/ \\__|\\__\\__,_|  v{IOTTA_VERSION}
+   |_|\___/ \__|\__\__,_|  v{IOTTA_VERSION}
 """)
 
 
@@ -51,6 +47,7 @@ app = FastAPI(
 app.include_router(plugins_router)
 app.include_router(credentials_router)
 app.include_router(devices_router)
+
 
 @app.get("/health")
 def health():

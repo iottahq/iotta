@@ -8,17 +8,17 @@ Bambu Lab printers use implicit FTPS on port 990 with a quirky TLS close.
 import asyncio
 import ftplib
 import io
-import logging
 import socket
 import ssl
 from typing import Callable
 
+from src.logging import get_logger
 from src.plugins.base_protocol import BaseProtocol
 
-logger = logging.getLogger(__name__)
+logger = get_logger("ftp")
 
 CONNECT_TIMEOUT = 8
-OP_TIMEOUT      = 120
+OP_TIMEOUT = 120
 
 
 class ImplicitFTP_TLS(ftplib.FTP_TLS):
@@ -27,21 +27,23 @@ class ImplicitFTP_TLS(ftplib.FTP_TLS):
     Required for devices like Bambu Lab printers that use port 990.
     """
 
-    def connect(self, host: str, port: int = 990, timeout: int = CONNECT_TIMEOUT, **kwargs):
-        self.host    = host
-        self.port    = port
+    def connect(
+        self, host: str, port: int = 990, timeout: int = CONNECT_TIMEOUT, **kwargs
+    ):
+        self.host = host
+        self.port = port
         self.timeout = timeout
 
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
-        ctx.verify_mode    = ssl.CERT_NONE
+        ctx.verify_mode = ssl.CERT_NONE
 
         sock = socket.create_connection((host, port), timeout=timeout)
         sock.settimeout(timeout)
 
-        self.sock    = ctx.wrap_socket(sock, server_hostname=host)
-        self.af      = self.sock.family
-        self.file    = self.sock.makefile("r", encoding="utf-8", errors="replace")
+        self.sock = ctx.wrap_socket(sock, server_hostname=host)
+        self.af = self.sock.family
+        self.file = self.sock.makefile("r", encoding="utf-8", errors="replace")
         self.welcome = self.getresp()
 
         return self.welcome
@@ -77,21 +79,21 @@ class FTPProtocol(BaseProtocol):
                 loop.run_in_executor(None, self._connect_sync),
                 timeout=CONNECT_TIMEOUT + 2,
             )
-            logger.info(f"FTP connected to {self.config.get('host')}")
+            logger.info(f"Connected to {self.config.get('host')}")
             return True
         except asyncio.TimeoutError:
-            logger.error("FTP connection timeout")
+            logger.error("Connection timeout")
             return False
         except Exception as e:
-            logger.error(f"FTP connect failed: {e}")
+            logger.error(f"Connect failed: {e}")
             return False
 
     def _connect_sync(self):
-        host     = self.config.get("host")
-        port     = int(self.config.get("port", 21))
+        host = self.config.get("host")
+        port = int(self.config.get("port", 21))
         username = self.config.get("username", "anonymous")
         password = self.config.get("password", "")
-        tls      = self.config.get("tls", "none")  # none | implicit | explicit
+        tls = self.config.get("tls", "none")  # none | implicit | explicit
 
         if tls == "implicit":
             ftp = ImplicitFTP_TLS()
@@ -193,10 +195,12 @@ class FTPProtocol(BaseProtocol):
             name = parts[8]
             if name in (".", ".."):
                 continue
-            files.append({
-                "name":  name,
-                "type":  "dir" if parts[0].startswith("d") else "file",
-                "size":  int(parts[4]) if parts[4].isdigit() else 0,
-                "date":  f"{parts[5]} {parts[6]} {parts[7]}",
-            })
+            files.append(
+                {
+                    "name": name,
+                    "type": "dir" if parts[0].startswith("d") else "file",
+                    "size": int(parts[4]) if parts[4].isdigit() else 0,
+                    "date": f"{parts[5]} {parts[6]} {parts[7]}",
+                }
+            )
         return files
