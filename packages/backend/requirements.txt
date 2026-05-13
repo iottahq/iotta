@@ -5,3 +5,4 @@ packaging>=24.0
 sqlalchemy
 alembic
 psycopg2-binary
+cryptography>=42.0.0

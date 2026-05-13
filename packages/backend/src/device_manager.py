@@ -5,70 +5,115 @@ Each device gets its own isolated FastAPI app with:
 - POST /devices/{id}/send/{action}
 - GET  /devices/{id}/request/{action}
 - WS   /devices/{id}/stream/{action}
+- GET  /devices/{id}/ping
 - GET  /devices/{id}/docs
 - GET  /devices/{id}/openapi.json
 
-Protocol connections are persistent per device – no connect/disconnect per request.
+Protocol connections are persistent per device.
+Access is enforced per group token.
 """
 
 import asyncio
 from uuid import UUID
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Query, Security, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
+from src.crypto import decrypt
 from src.database import SessionLocal
 from src.logging import get_logger
 from src.models.credential import Credential
 from src.models.device import Device
+from src.models.group import Group
+from src.permissions import require_device_access
 from src.plugins.base_protocol import BaseProtocol
 from src.plugins.loader import plugin_loader
 
 logger = get_logger("core")
 
+_sub_app_security = HTTPBearer()
+
+
+def _make_auth_dependency(device_group_id: UUID | None):
+    """
+    Returns a FastAPI dependency that checks the Bearer token
+    against the admin token and group tokens for this specific device.
+    """
+    import os
+    import secrets
+
+    from src.crypto import decrypt
+
+    ADMIN_TOKEN = os.getenv("IOTTA_ADMIN_TOKEN", "")
+
+    async def check_auth(
+        credentials: HTTPAuthorizationCredentials = Security(_sub_app_security),
+    ):
+        token = credentials.credentials
+
+        # Admin token → always allowed
+        if ADMIN_TOKEN and secrets.compare_digest(token.encode(), ADMIN_TOKEN.encode()):
+            return
+
+        # Check group tokens
+        db: Session = SessionLocal()
+        try:
+            groups = db.query(Group).all()
+            for group in groups:
+                try:
+                    decrypted = decrypt(group.token)
+                except Exception:
+                    continue
+                if secrets.compare_digest(token.encode(), decrypted.encode()):
+                    # Token matches a group – check device belongs to it
+                    require_device_access(device_group_id, group)
+                    return
+        finally:
+            db.close()
+
+        from fastapi import HTTPException, status
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return check_auth
+
 
 class DeviceConnections:
-    """Holds persistent protocol connections for a single device."""
-
     def __init__(self):
         self._connections: dict[str, BaseProtocol] = {}
         self._configs: dict[str, tuple] = {}
 
-    async def connect(
-        self, protocol_id: str, protocol_class: type[BaseProtocol], config: dict
-    ) -> BaseProtocol | None:
+    async def connect(self, protocol_id, protocol_class, config):
         if protocol_id in self._connections:
             return self._connections[protocol_id]
-
         self._configs[protocol_id] = (protocol_class, config)
-
         protocol = protocol_class(config)
         connected = await protocol.connect()
         if connected:
             self._connections[protocol_id] = protocol
             return protocol
-
         logger.error(f"Failed to connect protocol '{protocol_id}'")
         return None
 
-    def get(self, protocol_id: str) -> BaseProtocol | None:
+    def get(self, protocol_id):
         return self._connections.get(protocol_id)
 
-    async def reconnect(
-        self, protocol_id: str, protocol_class=None, config: dict = None
-    ) -> bool:
+    async def reconnect(self, protocol_id, protocol_class=None, config=None):
         if protocol_class is None or config is None:
             if protocol_id not in self._configs:
                 return False
             protocol_class, config = self._configs[protocol_id]
-
         if protocol_id in self._connections:
             try:
                 await self._connections[protocol_id].disconnect()
             except Exception:
                 pass
             del self._connections[protocol_id]
-
         protocol = protocol_class(config)
         connected = await protocol.connect()
         if connected:
@@ -76,11 +121,10 @@ class DeviceConnections:
             return True
         return False
 
-    async def disconnect_all(self) -> None:
+    async def disconnect_all(self):
         for protocol_id, protocol in self._connections.items():
             try:
                 await protocol.disconnect()
-                logger.info(f"Disconnected protocol '{protocol_id}'")
             except Exception as e:
                 logger.error(f"Error disconnecting '{protocol_id}': {e}")
         self._connections.clear()
@@ -93,9 +137,7 @@ class DeviceManager:
         self._connections: dict[str, DeviceConnections] = {}
         self._plugin_ids: dict[str, str] = {}
 
-    # ── Public API ────────────────────────────────────────────────────────────
-
-    async def mount_all(self) -> None:
+    async def mount_all(self):
         db: Session = SessionLocal()
         try:
             devices = db.query(Device).all()
@@ -104,25 +146,19 @@ class DeviceManager:
             logger.info(f"Mounted {len(self._apps)} device app(s)")
         finally:
             db.close()
-
         asyncio.create_task(self._reconnect_loop())
 
-    async def _reconnect_loop(self) -> None:
-        """Background task that checks and reconnects dead protocol connections every 30s."""
+    async def _reconnect_loop(self):
         while True:
             await asyncio.sleep(30)
             for device_id, connections in self._connections.items():
                 plugin_id = self._plugin_ids.get(device_id, "device")
                 dlog = get_logger(plugin_id, device_id=device_id)
-
                 for protocol_id in list(connections._configs.keys()):
                     protocol = connections._connections.get(protocol_id)
-                    if protocol:
-                        result = await protocol.ping()
-                        is_down = not result.get("ok")
-                    else:
-                        is_down = True
-
+                    is_down = (
+                        not (await protocol.ping()).get("ok") if protocol else True
+                    )
                     if is_down:
                         dlog.warning(
                             f"Protocol '{protocol_id}' is down – reconnecting..."
@@ -133,7 +169,7 @@ class DeviceManager:
                         else:
                             dlog.error(f"Protocol '{protocol_id}' reconnect failed")
 
-    async def mount(self, device_id: UUID) -> None:
+    async def mount(self, device_id: UUID):
         db: Session = SessionLocal()
         try:
             device = db.query(Device).filter(Device.id == device_id).first()
@@ -142,11 +178,10 @@ class DeviceManager:
         finally:
             db.close()
 
-    async def unmount(self, device_id: UUID) -> None:
+    async def unmount(self, device_id: UUID):
         key = str(device_id)
         plugin_id = self._plugin_ids.get(key, "device")
         dlog = get_logger(plugin_id, device_id=key)
-
         if key in self._connections:
             await self._connections[key].disconnect_all()
             del self._connections[key]
@@ -161,9 +196,7 @@ class DeviceManager:
             self._plugin_ids.pop(key, None)
             dlog.info("Unmounted")
 
-    # ── Internal ──────────────────────────────────────────────────────────────
-
-    async def _mount_device(self, device: Device, db: Session) -> None:
+    async def _mount_device(self, device: Device, db: Session):
         device_id = str(device.id)
         plugin_id = device.plugin_id
         dlog = get_logger(plugin_id, device_id=device_id)
@@ -185,8 +218,12 @@ class DeviceManager:
             dlog.warning("No credentials – skipping")
             return
 
+        import json
+
+        cred_data = json.loads(decrypt(credential.data))
+
         resolved_protocols = {
-            proto_id: _resolve(proto_config, credential.data)
+            proto_id: _resolve(proto_config, cred_data)
             for proto_id, proto_config in config.get("protocols", {}).items()
         }
 
@@ -199,8 +236,11 @@ class DeviceManager:
         self._connections[device_id] = connections
         self._plugin_ids[device_id] = plugin_id
 
+        # Build auth dependency scoped to this device's group
+        auth_dep = _make_auth_dependency(device.group_id)
+
         sub_app = self._build_sub_app(
-            device, config, credential.data, connections, plugin
+            device, config, cred_data, connections, plugin, auth_dep
         )
         mount_path = f"/devices/{device_id}"
         self._root_app.mount(mount_path, sub_app)
@@ -209,45 +249,36 @@ class DeviceManager:
         dlog.info(f"Mounted: {device.name} at {mount_path}")
 
     def _build_sub_app(
-        self, device, config, credentials, connections, plugin
+        self, device, config, credentials, connections, plugin, auth_dep
     ) -> FastAPI:
         meta = {k: v for k, v in plugin.items() if not k.startswith("_")}
-
         sub_app = FastAPI(
             title=device.name,
             description=meta.get("description", ""),
             version=meta.get("version", "1.0.0"),
+            dependencies=[Depends(auth_dep)],
         )
-
         actions = config.get("actions", {})
-
         for action_name, action_def in actions.get("send", {}).items():
             self._register_send(
                 sub_app, action_name, action_def, credentials, connections
             )
-
         for action_name, action_def in actions.get("request", {}).items():
             self._register_request(
                 sub_app, action_name, action_def, credentials, connections
             )
-
         for action_name, action_def in actions.get("stream", {}).items():
             self._register_stream(
                 sub_app, action_name, action_def, credentials, connections
             )
-
         self._register_ping(sub_app, connections)
-
         return sub_app
 
-    # ── Route registration ────────────────────────────────────────────────────
-
-    def _register_ping(self, app: FastAPI, connections: DeviceConnections):
+    def _register_ping(self, app, connections):
         @app.get("/ping", summary="Ping device", tags=["device"])
         async def ping():
             results = {}
             all_ok = True
-
             for protocol_id in connections._configs.keys():
                 protocol = connections._connections.get(protocol_id)
                 result = (
@@ -258,10 +289,8 @@ class DeviceManager:
                 results[protocol_id] = result
                 if not result.get("ok"):
                     all_ok = False
-
             if not results:
                 all_ok = False
-
             return {"online": all_ok, "protocols": results}
 
     def _register_send(self, app, name, action, credentials, connections):
@@ -341,9 +370,7 @@ class DeviceManager:
         default_path = action.get("input", {}).get("path", {}).get("default")
 
         @app.get(f"/request/{name}", summary=label, tags=["request"])
-        async def request_action(
-            path: str = Query(default=None, description="Directory or file path"),
-        ):
+        async def request_action(path: str = Query(default=None)):
             protocol_id = action.get("protocol")
             if protocol_id == "camera":
                 return JSONResponse(
@@ -360,8 +387,7 @@ class DeviceManager:
                     status_code=503,
                 )
             return await protocol.execute_action(
-                action.get("method", name),
-                {"path": path or default_path or "/"},
+                action.get("method", name), {"path": path or default_path or "/"}
             )
 
         request_action.__name__ = f"request_{name}"
@@ -416,7 +442,6 @@ def _resolve(obj, context: dict):
     return obj
 
 
-# Singleton
 device_manager: DeviceManager | None = None
 
 
