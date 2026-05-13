@@ -1,6 +1,7 @@
 id: bambu-lab-a1
 name: Bambu Lab A1
 version: 1.0.0
+status: alpha
 scope: core
 config: config.json
 description: >

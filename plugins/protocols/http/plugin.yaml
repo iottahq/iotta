@@ -3,6 +3,7 @@ scope: core
 entry: main.py
 name: HTTP / HTTPS
 version: 1.0.0
+status: alpha
 description: >
   Connect to any device that speaks HTTP or HTTPS.
   Supports GET, POST, PUT, DELETE with bearer, basic, and api-key authentication.

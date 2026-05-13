@@ -2,6 +2,7 @@ id: mqtt
 scope: core
 entry: main.py
 name: MQTT
+status: alpha
 version: 1.0.0
 description: >
   Connect to any device that communicates over MQTT.

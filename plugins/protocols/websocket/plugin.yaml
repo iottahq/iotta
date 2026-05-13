@@ -1,0 +1,26 @@
+id: ws
+scope: core
+entry: main.py
+name: WebSocket
+version: 1.0.0
+status: alpha
+description: >
+  Connect to any device that exposes a WebSocket endpoint.
+  Supports sending messages, receiving real-time updates via subscribe,
+  and automatic reconnect via iotta's reconnect loop.
+  Ideal for ESP32 projects, Home Assistant, and any WS-based IoT device.
+author:
+  name: Elias Bergmann
+  organisation: iottahq
+  url: https://github.com/iottahq
+license: Sustainable Use License
+tags:
+  - websocket
+  - ws
+  - realtime
+  - iot
+dependencies:
+  protocols: []
+  pip:
+    - websockets>=12.0
+min_iotta_version: 0.1.0
