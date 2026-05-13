@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from src.auth import check_token_configured, require_auth
 from src.database import Base, engine
 from src.device_manager import init_device_manager
 from src.logging import get_logger, setup_logging
@@ -29,6 +30,7 @@ def print_banner():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    check_token_configured()
     Base.metadata.create_all(bind=engine)
     print_banner()
     plugin_loader.load_all()
@@ -42,6 +44,7 @@ app = FastAPI(
     description="Any device. One API.",
     version=IOTTA_VERSION,
     lifespan=lifespan,
+    dependencies=[Depends(require_auth)],
 )
 
 app.include_router(plugins_router)

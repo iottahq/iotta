@@ -6,6 +6,8 @@ services:
     volumes:
       - ./packages/backend/src:/app/src
       - ./plugins:/plugins
+    env_file:
+      - .env
     environment:
       - DB_USER=iotta
       - DB_PASSWORD=iotta
