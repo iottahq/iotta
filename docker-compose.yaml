@@ -1,4 +1,15 @@
 services:
+  frontend:
+    build:
+      context: ./packages/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./packages/frontend/src:/app/src
+    depends_on:
+      - backend
+
   backend:
     build: ./packages/backend
     ports:
@@ -15,7 +26,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-
   db:
     image: postgres:16-alpine
     ports:
@@ -31,6 +41,5 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
 volumes:
   postgres_data:
