@@ -52,7 +52,7 @@ const emit = defineEmits<{
           class="relative z-10 w-full max-w-sm rounded-xl border border-border bg-card shadow-xl px-6 py-5 mx-4"
         >
           <div class="flex items-center justify-between mb-4">
-            <h2 class="text-sm font-semibold">Edit Device group</h2>
+            <h2 class="text-sm font-semibold">Edit group</h2>
             <Button variant="ghost" size="icon-sm" @click="emit('close')">
               <RiCloseLine class="size-3.5" />
             </Button>
@@ -143,7 +143,7 @@ const emit = defineEmits<{
             </div>
 
             <!-- Actions -->
-            <div class="flex gap-2 justify-between pt-1 border-t border-border">
+            <div class="flex gap-2 justify-end">
               <Button
                 variant="destructive"
                 size="sm"
