@@ -38,7 +38,7 @@ _sub_app_security = HTTPBearer()
 def _make_auth_dependency(device_group_id: UUID | None):
     """
     Returns a FastAPI dependency that checks the Bearer token
-    against the admin token and group tokens for this specific device.
+    against JWT, admin token, and group tokens for this specific device.
     """
     import os
     import secrets
@@ -51,6 +51,22 @@ def _make_auth_dependency(device_group_id: UUID | None):
         credentials: HTTPAuthorizationCredentials = Security(_sub_app_security),
     ):
         token = credentials.credentials
+
+        # NEU: JWT zuerst prüfen
+        db: Session = SessionLocal()
+        try:
+            from src.models.user import User
+            from src.routers.auth import decode_token
+
+            user_id = decode_token(token)
+            if user_id:
+                user = db.query(User).filter(User.id == user_id).first()
+                if user:
+                    return
+        except Exception:
+            pass
+        finally:
+            db.close()
 
         # Admin token → always allowed
         if ADMIN_TOKEN and secrets.compare_digest(token.encode(), ADMIN_TOKEN.encode()):
@@ -66,7 +82,6 @@ def _make_auth_dependency(device_group_id: UUID | None):
                 except Exception:
                     continue
                 if secrets.compare_digest(token.encode(), decrypted.encode()):
-                    # Token matches a group – check device belongs to it
                     require_device_access(device_group_id, group)
                     return
         finally:
@@ -187,9 +202,10 @@ class DeviceManager:
             del self._connections[key]
         if key in self._apps:
             mount_path = f"/devices/{key}"
-            self._root_app.routes = [
+            # Fix: use router.routes (mutable list) instead of the read-only .routes property
+            self._root_app.router.routes = [
                 r
-                for r in self._root_app.routes
+                for r in self._root_app.router.routes
                 if not (hasattr(r, "path") and r.path == mount_path)
             ]
             del self._apps[key]
