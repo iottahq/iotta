@@ -13,8 +13,6 @@ import {
     RiLoader4Line,
 } from "@remixicon/vue";
 
-// ── State ──────────────────────────────────────────────────────────────────────
-
 type Tab = "protocols" | "devices";
 
 const activeTab = ref<Tab>("protocols");
@@ -25,8 +23,6 @@ const protocols = ref<PluginMeta[]>([]);
 const devices = ref<PluginMeta[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
-
-// ── Data fetching ──────────────────────────────────────────────────────────────
 
 async function load() {
     loading.value = true;
@@ -59,8 +55,6 @@ async function reload() {
 }
 
 onMounted(load);
-
-// ── Filtered lists ─────────────────────────────────────────────────────────────
 
 const filtered = computed(() => {
     const q = search.value.toLowerCase().trim();

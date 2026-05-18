@@ -30,8 +30,6 @@ import type { Component } from "vue";
 
 const router = useRouter();
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
 interface DeviceWithStatus extends Device {
     online?: boolean | null; // null = loading
 }
@@ -41,8 +39,6 @@ interface GroupSection {
     devices: DeviceWithStatus[];
     collapsed: boolean;
 }
-
-// ── State ──────────────────────────────────────────────────────────────────────
 
 const viewMode = ref<"grid" | "list">("grid");
 const search = ref("");
@@ -75,8 +71,6 @@ const deviceError = ref<string | null>(null);
 const plugins = ref<{ id: string; name: string }[]>([]);
 const credentials = ref<{ id: string; name: string }[]>([]);
 
-// ── Plugin icon map ────────────────────────────────────────────────────────────
-
 const pluginIconMap: Record<string, Component> = {
     "bambu-lab-a1": RiPrinterLine,
 };
@@ -84,8 +78,6 @@ const pluginIconMap: Record<string, Component> = {
 function getPluginIcon(pluginId: string): Component {
     return pluginIconMap[pluginId] ?? RiServerLine;
 }
-
-// ── Data fetching ──────────────────────────────────────────────────────────────
 
 async function load() {
     loading.value = true;
@@ -168,8 +160,6 @@ onMounted(async () => {
     } catch {}
 });
 
-// ── Search / filter ────────────────────────────────────────────────────────────
-
 const filteredSections = computed(() => {
     const q = search.value.toLowerCase().trim();
     if (!q) return sections.value;
@@ -189,8 +179,6 @@ const filteredSections = computed(() => {
         })
         .filter((s): s is GroupSection => s !== null);
 });
-
-// ── Group actions ──────────────────────────────────────────────────────────────
 
 function toggleSection(idx: number) {
     sections.value[idx].collapsed = !sections.value[idx].collapsed;
@@ -212,8 +200,6 @@ async function createGroup() {
         savingGroup.value = false;
     }
 }
-
-// ── Device actions ─────────────────────────────────────────────────────────────
 
 function openNewDevice(groupId: string | null) {
     newDeviceTargetGroup.value = groupId;
@@ -250,8 +236,6 @@ async function createDevice() {
         savingDevice.value = false;
     }
 }
-
-// ── Drag & drop ────────────────────────────────────────────────────────────────
 
 function onDragStart(deviceId: string) {
     dragging.value = deviceId;
@@ -295,8 +279,6 @@ function onDragEnd() {
     dragging.value = null;
     dragOverGroup.value = null;
 }
-
-// ── Group edit sheet ───────────────────────────────────────────────────────────
 
 const editGroup = ref<Group | null>(null);
 const editGroupName = ref("");
@@ -387,8 +369,6 @@ async function deleteGroup() {
         deletingGroup.value = false;
     }
 }
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function sectionKey(s: GroupSection) {
     return s.group?.id ?? "ungrouped";
