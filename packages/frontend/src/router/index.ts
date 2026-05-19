@@ -25,7 +25,7 @@ const router = createRouter({
         {
             path: "/devices/:id",
             name: "device",
-            component: () => import("@/views/DeviceView.vue"),
+            component: () => import("@/views/devices/View.vue"),
         },
         {
             path: "/plugins",
