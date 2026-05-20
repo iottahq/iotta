@@ -1,0 +1,35 @@
+[
+    {
+        "label": "docker: up",
+        "command": "docker compose up",
+        "cwd": "$ZED_WORKTREE_ROOT",
+        "use_new_terminal": true,
+        "reveal": "always",
+    },
+    {
+        "label": "docker: up --build",
+        "command": "docker compose up --build",
+        "cwd": "$ZED_WORKTREE_ROOT",
+        "use_new_terminal": true,
+        "reveal": "always",
+    },
+    {
+        "label": "docker: build --no-cache",
+        "command": "docker compose build --no-cache",
+        "cwd": "$ZED_WORKTREE_ROOT",
+        "use_new_terminal": true,
+        "reveal": "always",
+    },
+    {
+        "label": "docker: down",
+        "command": "docker compose down",
+        "cwd": "$ZED_WORKTREE_ROOT",
+        "use_new_terminal": false,
+    },
+    {
+        "label": "docker: restart",
+        "command": "docker compose restart",
+        "cwd": "$ZED_WORKTREE_ROOT",
+        "use_new_terminal": false,
+    },
+]

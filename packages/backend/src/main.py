@@ -77,20 +77,19 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://0.0.0.0:5173",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# Auth router – setup/login sind public, kein globales require_auth
+# All auth routes (setup, login, me) live in auth_router
 app.include_router(auth_router)
-
-
-@app.get("/auth/me", response_model=UserRead, tags=["auth"])
-def me(current_user: User = Depends(get_current_user)):
-    return current_user
-
 
 # Protected routers
 app.include_router(groups_router, dependencies=[Depends(require_auth)])
