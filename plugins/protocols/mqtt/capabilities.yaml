@@ -1,0 +1,66 @@
+# capabilities.yaml – MQTT Protocol Plugin
+# Defines the standard actions a device plugin can use when depending on this protocol.
+# Referenced by device plugins via: protocol: mqtt, method: <action_id>
+
+capabilities:
+    publish:
+        label: Publish Message
+        description: Publish a JSON payload to an MQTT topic.
+        input:
+            topic:
+                type: string
+                required: true
+                description: MQTT topic to publish to.
+            payload:
+                type: object
+                required: true
+                description: JSON payload to publish.
+            qos:
+                type: integer
+                required: false
+                default: 1
+                enum: [0, 1, 2]
+                description: Quality of service level.
+        output:
+            success:
+                type: boolean
+
+    subscribe:
+        label: Subscribe to Topic
+        description: >
+            Subscribe to one or more MQTT topics and receive messages via callback.
+            Typically configured via subscribe_topics in the protocol config rather
+            than called as a direct action. Used internally by the stream system.
+        input:
+            topics:
+                type: array
+                required: true
+                description: List of MQTT topics to subscribe to.
+        output:
+            success:
+                type: boolean
+
+# Notes for device plugin authors:
+#
+# MQTT is primarily used for two things in iotta:
+#
+# 1. send actions  → use method: publish
+#    Define a topic and payload in your config.json action. The payload supports
+#    {credential} placeholders which are resolved at runtime.
+#
+#    Example:
+#      "pause": {
+#        "protocol": "mqtt",
+#        "method": "publish",
+#        "topic": "device/{serial}/request",
+#        "payload": { "print": { "command": "pause" } }
+#      }
+#
+# 2. stream actions → use the built-in subscribe_topics config field
+#    Topics to subscribe to are declared in the protocol config, not as actions.
+#    Incoming messages are forwarded to any active WebSocket stream.
+#
+#    Example (in protocols config):
+#      "mqtt": {
+#        "subscribe_topics": ["device/{serial}/report"]
+#      }

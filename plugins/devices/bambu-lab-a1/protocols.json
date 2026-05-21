@@ -1,0 +1,30 @@
+{
+    "mqtt": {
+        "host": "{ip}",
+        "port": 8883,
+        "tls": true,
+        "username": "bblp",
+        "password": "{access_code}",
+        "subscribe_topics": ["device/{serial}/report"],
+        "on_connect_publish": {
+            "topic": "device/{serial}/request",
+            "payload": {
+                "pushing": {
+                    "sequence_id": "0",
+                    "command": "pushall",
+                    "version": 1,
+                    "push_target": 1
+                }
+            }
+        },
+        "methods": ["publish", "subscribe"]
+    },
+    "ftp": {
+        "host": "{ip}",
+        "port": 990,
+        "tls": "implicit",
+        "username": "bblp",
+        "password": "{access_code}",
+        "methods": "all"
+    }
+}

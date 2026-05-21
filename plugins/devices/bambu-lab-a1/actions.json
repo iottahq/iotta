@@ -1,0 +1,220 @@
+{
+    "send": {
+        "print": {
+            "protocol": "mqtt",
+            "method": "publish",
+            "label": "Start Print",
+            "topic": "device/{serial}/request",
+            "payload": {
+                "print": {
+                    "sequence_id": "1",
+                    "command": "project_file",
+                    "param": "Metadata/plate_{plate}.gcode",
+                    "project_id": "0",
+                    "profile_id": "0",
+                    "task_id": "0",
+                    "subtask_id": "0",
+                    "subtask_name": "{filename}",
+                    "file": "",
+                    "url": "file:///{file_path}",
+                    "md5": "",
+                    "timelapse": "{timelapse}",
+                    "bed_type": "auto",
+                    "bed_leveling": "{bed_leveling}",
+                    "flow_cali": "{flow_cali}",
+                    "vibration_cali": "{vibration_cali}",
+                    "layer_inspect": false,
+                    "use_ams": true,
+                    "ams_mapping": ["{ams_slot}"],
+                    "plate_idx": "{plate_idx}"
+                }
+            },
+            "input": {
+                "file_path": { "type": "string", "required": true },
+                "filename": { "type": "string", "required": true },
+                "ams_slot": { "type": "integer", "default": 0 },
+                "plate": { "type": "integer", "default": 1 },
+                "plate_idx": { "type": "integer", "default": 0 },
+                "bed_leveling": { "type": "boolean", "default": true },
+                "timelapse": { "type": "boolean", "default": false },
+                "flow_cali": { "type": "boolean", "default": false },
+                "vibration_cali": { "type": "boolean", "default": false }
+            },
+            "example": {
+                "file_path": "/sdcard/3d_printer/cache/benchy.3mf",
+                "filename": "benchy.3mf",
+                "ams_slot": 0,
+                "plate": 1,
+                "plate_idx": 0,
+                "bed_leveling": true,
+                "timelapse": false,
+                "flow_cali": false,
+                "vibration_cali": false
+            }
+        },
+
+        "pause": {
+            "protocol": "mqtt",
+            "method": "publish",
+            "label": "Pause Print",
+            "topic": "device/{serial}/request",
+            "payload": {
+                "print": { "sequence_id": "1", "command": "pause" }
+            },
+            "example": {}
+        },
+
+        "resume": {
+            "protocol": "mqtt",
+            "method": "publish",
+            "label": "Resume Print",
+            "topic": "device/{serial}/request",
+            "payload": {
+                "print": { "sequence_id": "1", "command": "resume" }
+            },
+            "example": {}
+        },
+
+        "stop": {
+            "protocol": "mqtt",
+            "method": "publish",
+            "label": "Stop Print",
+            "topic": "device/{serial}/request",
+            "payload": {
+                "print": { "sequence_id": "1", "command": "stop" }
+            },
+            "example": {}
+        },
+
+        "home": {
+            "protocol": "mqtt",
+            "method": "publish",
+            "label": "Home Axes",
+            "topic": "device/{serial}/request",
+            "payload": {
+                "print": {
+                    "sequence_id": "1",
+                    "command": "gcode_line",
+                    "param": "G28 \n"
+                }
+            },
+            "example": {}
+        },
+
+        "clear_error": {
+            "protocol": "mqtt",
+            "method": "publish",
+            "label": "Clear Error",
+            "topic": "device/{serial}/request",
+            "payload": {
+                "print": { "sequence_id": "1", "command": "clean_print_error" }
+            },
+            "example": {}
+        },
+
+        "light": {
+            "protocol": "mqtt",
+            "method": "publish",
+            "label": "Light Control",
+            "topic": "device/{serial}/request",
+            "payload": {
+                "system": {
+                    "sequence_id": "1",
+                    "command": "ledctrl",
+                    "led_node": "work_light",
+                    "led_mode": "{mode}",
+                    "led_on_time": 500,
+                    "led_off_time": 500,
+                    "loop_times": 0,
+                    "interval_time": 0
+                }
+            },
+            "input": {
+                "mode": {
+                    "type": "string",
+                    "default": "on",
+                    "enum": ["on", "off", "flashing"]
+                }
+            },
+            "example": {
+                "mode": "on"
+            }
+        },
+
+        "upload_file": {
+            "protocol": "ftp",
+            "method": "upload",
+            "label": "Upload File",
+            "input": {
+                "path": { "type": "string", "required": true },
+                "data": { "type": "bytes", "required": true }
+            },
+            "example": {
+                "path": "/sdcard/3d_printer/cache/benchy.3mf"
+            }
+        },
+
+        "delete_file": {
+            "protocol": "ftp",
+            "method": "delete",
+            "label": "Delete File",
+            "input": {
+                "path": { "type": "string", "required": true }
+            },
+            "example": {
+                "path": "/sdcard/3d_printer/cache/benchy.3mf"
+            }
+        }
+    },
+
+    "request": {
+        "snapshot": {
+            "protocol": "camera",
+            "label": "Snapshot",
+            "port": 6000,
+            "auth": {
+                "username": "bblp",
+                "password": "{access_code}"
+            },
+            "example": {}
+        },
+
+        "files": {
+            "protocol": "ftp",
+            "method": "list",
+            "label": "List Files",
+            "input": {
+                "path": { "type": "string" }
+            },
+            "example": {
+                "path": "/"
+            }
+        }
+    },
+
+    "stream": {
+        "status": {
+            "protocol": "mqtt",
+            "method": "subscribe",
+            "label": "Live Status",
+            "topic": "device/{serial}/report",
+            "filter": {
+                "key": "print.command",
+                "value": "push_status"
+            },
+            "merge": true,
+            "emit_as": "websocket"
+        },
+
+        "camera": {
+            "protocol": "camera",
+            "label": "Camera Feed",
+            "port": 6000,
+            "auth": {
+                "username": "bblp",
+                "password": "{access_code}"
+            },
+            "emit_as": "websocket"
+        }
+    }
+}

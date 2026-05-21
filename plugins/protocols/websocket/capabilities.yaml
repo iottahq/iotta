@@ -1,0 +1,42 @@
+# capabilities.yaml – WebSocket Protocol Plugin
+# Defines the standard actions a device plugin can use when depending on this protocol.
+# Referenced by device plugins via: protocol: ws, method: <action_id>
+
+capabilities:
+    send:
+        label: Send Message
+        description: Send a JSON message to the device over the WebSocket connection.
+        input:
+            payload:
+                type: object
+                required: true
+                description: JSON payload to send.
+        output:
+            success:
+                type: boolean
+
+# Notes for device plugin authors:
+#
+# WebSocket is primarily used for two things in iotta:
+#
+# 1. send actions  → use method: send
+#    Sends a JSON message to the device. The payload supports
+#    {credential} placeholders which are resolved at runtime.
+#
+#    Example:
+#      "command": {
+#        "protocol": "ws",
+#        "method": "send",
+#        "label": "Send Command",
+#        "example": { "cmd": "toggle" }
+#      }
+#
+# 2. stream actions → no method needed
+#    Incoming messages from the device are automatically forwarded to any
+#    active WebSocket stream. Just declare the action with protocol: ws.
+#
+#    Example:
+#      "status": {
+#        "protocol": "ws",
+#        "label": "Live Status"
+#      }

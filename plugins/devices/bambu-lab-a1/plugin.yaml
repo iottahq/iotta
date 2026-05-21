@@ -3,7 +3,6 @@ name: Bambu Lab A1
 version: 1.0.0
 status: alpha
 scope: core
-config: config.json
 description: >
   Bambu Lab A1 FDM 3D printer.
   Supports print control, file management, AMS, camera snapshot, and real-time status.

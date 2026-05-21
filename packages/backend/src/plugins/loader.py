@@ -5,9 +5,12 @@ On startup, the loader:
 1. Scans plugins/protocols/ and registers all protocol plugins
 2. Installs missing pip dependencies declared in plugin.yaml
 3. Verifies min_iotta_version compatibility
-4. Scans plugins/devices/ and reads each plugin.yaml
-5. Validates device plugin dependencies (required protocols must be installed)
-6. Makes all plugins available to the rest of the application
+4. Loads capabilities.yaml if present (convention: same directory as plugin.yaml)
+5. Scans plugins/devices/ and reads each plugin.yaml
+6. Loads credentials.json, protocols.json, actions.json if present (convention-based)
+7. Validates device plugin dependencies (required protocols must be installed)
+8. Validates declared methods against protocol capabilities
+9. Makes all plugins available to the rest of the application
 
 Hot-reload is supported – call reload_protocols(), reload_devices(), or reload_all()
 to pick up new or updated plugins without restarting the server.
@@ -15,6 +18,7 @@ to pick up new or updated plugins without restarting the server.
 
 import importlib
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -97,6 +101,66 @@ def _pip_to_import_name(package: str) -> str:
     return mapping.get(package.lower(), package.lower())
 
 
+def _load_capabilities(protocol_dir: Path, protocol_name: str) -> dict | None:
+    """
+    Loads capabilities.yaml from the protocol plugin directory if present.
+    Convention: capabilities.yaml must live in the same directory as plugin.yaml.
+    """
+    capabilities_file = protocol_dir / "capabilities.yaml"
+    if not capabilities_file.exists():
+        return None
+    try:
+        with open(capabilities_file, "r") as f:
+            data = yaml.safe_load(f) or {}
+        capabilities = data.get("capabilities", {})
+        logger.debug(
+            f"Loaded {len(capabilities)} capability/capabilities for '{protocol_name}': "
+            f"{list(capabilities.keys())}"
+        )
+        return capabilities
+    except Exception as e:
+        logger.warning(f"Failed to load capabilities.yaml for '{protocol_name}': {e}")
+        return None
+
+
+def _load_json_if_exists(path: Path, label: str, device_id: str) -> dict | None:
+    """Load a JSON file if it exists, return None otherwise."""
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load {label} for '{device_id}': {e}")
+        return None
+
+
+def _validate_methods(
+    protocols_config: dict,
+    device_id: str,
+    protocol_capabilities: dict[str, dict],
+) -> None:
+    """
+    Warns if a device plugin declares methods that don't exist in the
+    corresponding protocol's capabilities.
+    """
+    for proto_id, proto_config in protocols_config.items():
+        methods = proto_config.get("methods")
+        if not methods or methods == "all":
+            continue
+
+        capabilities = protocol_capabilities.get(proto_id)
+        if not capabilities:
+            continue
+
+        for method in methods:
+            if method not in capabilities:
+                logger.warning(
+                    f"Device plugin '{device_id}': method '{method}' not found in "
+                    f"capabilities of protocol '{proto_id}'"
+                )
+
+
 class PluginLoader:
     def __init__(self):
         self._protocols: dict[str, dict] = {}
@@ -129,9 +193,12 @@ class PluginLoader:
                 )
                 continue
 
-            self._load_protocol(protocol_dir.name, plugin_file, manifest_file)
+            self._load_protocol(protocol_dir, plugin_file, manifest_file)
 
-    def _load_protocol(self, name: str, plugin_file: Path, manifest_file: Path) -> None:
+    def _load_protocol(
+        self, protocol_dir: Path, plugin_file: Path, manifest_file: Path
+    ) -> None:
+        name = protocol_dir.name
         try:
             meta = {}
             if manifest_file.exists():
@@ -173,6 +240,10 @@ class PluginLoader:
 
             protocol_id = meta.get("id") or protocol_class.protocol_name or name
 
+            capabilities = _load_capabilities(protocol_dir, protocol_id)
+            if capabilities is not None:
+                meta["capabilities"] = capabilities
+
             self._protocols[protocol_id] = {"class": protocol_class, "meta": meta}
 
             logger.info(
@@ -198,11 +269,10 @@ class PluginLoader:
             if not manifest_file.exists():
                 logger.warning(f"No plugin.yaml in {device_dir.name}, skipping")
                 continue
-            self._load_device(device_dir.name, manifest_file)
+            self._load_device(device_dir, manifest_file)
 
-    def _load_device(self, device_id: str, manifest_file: Path) -> None:
-        import json
-
+    def _load_device(self, device_dir: Path, manifest_file: Path) -> None:
+        device_id = device_dir.name
         try:
             with open(manifest_file, "r") as f:
                 manifest = yaml.safe_load(f)
@@ -221,17 +291,46 @@ class PluginLoader:
             if not _check_min_version(manifest.get("min_iotta_version", ""), device_id):
                 return
 
-            config_file = manifest.get("config")
-            if config_file:
-                config_path = manifest_file.parent / config_file
-                if config_path.exists():
-                    with open(config_path, "r") as f:
-                        manifest["_config"] = json.load(f)
-                    logger.debug(f"Loaded config '{config_file}' for '{device_id}'")
-                else:
-                    logger.warning(
-                        f"Device plugin '{device_id}' config file '{config_file}' not found"
-                    )
+            # Convention-based file loading – no references needed in plugin.yaml
+            credentials = _load_json_if_exists(
+                device_dir / "credentials.json", "credentials.json", device_id
+            )
+            if credentials is not None:
+                manifest["_credentials"] = credentials
+
+            protocols_config = _load_json_if_exists(
+                device_dir / "protocols.json", "protocols.json", device_id
+            )
+            if protocols_config is not None:
+                manifest["_protocols"] = protocols_config
+
+            actions = _load_json_if_exists(
+                device_dir / "actions.json", "actions.json", device_id
+            )
+            if actions is not None:
+                manifest["_actions"] = actions
+
+            # Legacy: fall back to config.json if the split files don't exist
+            if "_protocols" not in manifest and "_actions" not in manifest:
+                config_file = manifest.get("config")
+                if config_file:
+                    config_path = device_dir / config_file
+                    legacy = _load_json_if_exists(config_path, config_file, device_id)
+                    if legacy:
+                        manifest["_config"] = legacy
+                        logger.debug(
+                            f"Loaded legacy config '{config_file}' for '{device_id}'"
+                        )
+
+            # Validate declared methods against protocol capabilities
+            if "_protocols" in manifest:
+                protocol_capabilities = {
+                    pid: (self._protocols[pid]["meta"].get("capabilities") or {})
+                    for pid in self._protocols
+                }
+                _validate_methods(
+                    manifest["_protocols"], device_id, protocol_capabilities
+                )
 
             missing = [
                 p
@@ -294,6 +393,12 @@ class PluginLoader:
     def get_protocol_meta(self, protocol_id: str) -> dict | None:
         entry = self._protocols.get(protocol_id)
         return entry["meta"] if entry else None
+
+    def get_protocol_capabilities(self, protocol_id: str) -> dict | None:
+        entry = self._protocols.get(protocol_id)
+        if not entry:
+            return None
+        return entry["meta"].get("capabilities")
 
     def get_device(self, device_id: str) -> dict | None:
         return self._devices.get(device_id)

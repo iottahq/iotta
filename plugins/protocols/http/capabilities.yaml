@@ -1,0 +1,152 @@
+# capabilities.yaml – HTTP / HTTPS Protocol Plugin
+# Defines the standard actions a device plugin can use when depending on this protocol.
+# Referenced by device plugins via: protocol: http, method: <action_id>
+
+capabilities:
+    get:
+        label: GET Request
+        description: Fetch data from an endpoint. Returns the response body as JSON or plain text.
+        input:
+            path:
+                type: string
+                required: true
+                description: Request path, appended to base_url (e.g. "/api/status").
+            params:
+                type: object
+                required: false
+                description: Query parameters as key-value pairs.
+        output:
+            success:
+                type: boolean
+            status_code:
+                type: integer
+            body:
+                type: any
+                description: Parsed JSON or plain text response body.
+
+    post:
+        label: POST Request
+        description: Send a JSON body to an endpoint.
+        input:
+            path:
+                type: string
+                required: true
+                description: Request path, appended to base_url.
+            body:
+                type: object
+                required: false
+                description: JSON body to send.
+        output:
+            success:
+                type: boolean
+            status_code:
+                type: integer
+            body:
+                type: any
+
+    put:
+        label: PUT Request
+        description: Replace a resource at an endpoint with a JSON body.
+        input:
+            path:
+                type: string
+                required: true
+                description: Request path, appended to base_url.
+            body:
+                type: object
+                required: false
+                description: JSON body to send.
+        output:
+            success:
+                type: boolean
+            status_code:
+                type: integer
+            body:
+                type: any
+
+    patch:
+        label: PATCH Request
+        description: Partially update a resource at an endpoint with a JSON body.
+        input:
+            path:
+                type: string
+                required: true
+                description: Request path, appended to base_url.
+            body:
+                type: object
+                required: false
+                description: Partial JSON body with only the fields to update.
+        output:
+            success:
+                type: boolean
+            status_code:
+                type: integer
+            body:
+                type: any
+
+    delete:
+        label: DELETE Request
+        description: Delete a resource at an endpoint.
+        input:
+            path:
+                type: string
+                required: true
+                description: Request path, appended to base_url.
+        output:
+            success:
+                type: boolean
+            status_code:
+                type: integer
+            body:
+                type: any
+
+    head:
+        label: HEAD Request
+        description: >
+            Check if an endpoint is reachable and inspect response headers without
+            fetching the body. Useful for liveness checks and cache validation.
+        input:
+            path:
+                type: string
+                required: true
+                description: Request path, appended to base_url.
+            params:
+                type: object
+                required: false
+                description: Query parameters as key-value pairs.
+        output:
+            success:
+                type: boolean
+            status_code:
+                type: integer
+            headers:
+                type: object
+                description: Response headers returned by the server.
+
+# Notes for device plugin authors:
+#
+# The base_url is set once in the protocol config and shared across all actions.
+# The path in each action is appended to it:
+#
+#   base_url: "http://192.168.1.42"  +  path: "/api/status"  →  GET http://192.168.1.42/api/status
+#
+# Auth is also configured once at the protocol level (bearer, basic, api-key, none)
+# and applied automatically to every request – no need to repeat it per action.
+#
+# Choosing the right method:
+#   get    → read data, no side effects
+#   post   → create a resource or trigger an action
+#   put    → replace a resource entirely
+#   patch  → update specific fields of a resource
+#   delete → remove a resource
+#   head   → check reachability or headers without a response body
+#
+# Example action:
+#   "status": {
+#     "protocol": "http",
+#     "method": "get",
+#     "label": "Get Status",
+#     "input": {
+#       "path": { "type": "string", "default": "/api/status" }
+#     }
+#   }

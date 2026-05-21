@@ -1,7 +1,7 @@
 """
 main.py – HTTP protocol plugin for iotta.
 
-Supports GET, POST, PUT, DELETE with optional auth (bearer, basic, api-key).
+Supports GET, POST, PUT, PATCH, DELETE, HEAD with optional auth (bearer, basic, api-key).
 Uses httpx for async HTTP requests.
 """
 
@@ -21,7 +21,7 @@ class HTTPProtocol(BaseProtocol):
         super().__init__(config)
         self._client: httpx.AsyncClient | None = None
 
-    # Connection
+    # ── Connection ────────────────────────────────────────────────────────────
 
     async def connect(self) -> bool:
         try:
@@ -46,18 +46,26 @@ class HTTPProtocol(BaseProtocol):
     def is_connected(self) -> bool:
         return self._client is not None
 
-    # Actions
+    # ── Actions ───────────────────────────────────────────────────────────────
 
     async def execute_action(self, action: str, payload: dict) -> dict:
         if not self._client:
             return {"success": False, "error": "Not connected"}
 
-        method = payload.get("method", "GET").upper()
+        method = action.upper()
         path = payload.get("path", "/")
         body = payload.get("body", None)
         params = payload.get("params", None)
 
         try:
+            if method == "HEAD":
+                response = await self._client.head(path, params=params)
+                return {
+                    "success": response.is_success,
+                    "status_code": response.status_code,
+                    "headers": dict(response.headers),
+                }
+
             response = await self._client.request(
                 method=method,
                 url=path,
@@ -74,12 +82,12 @@ class HTTPProtocol(BaseProtocol):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Status
+    # ── Subscribe ─────────────────────────────────────────────────────────────
 
     async def subscribe(self, callback: Callable[[dict], None]) -> None:
         logger.debug("HTTP protocol does not support push subscriptions")
 
-    # Helpers
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _build_headers(self) -> dict:
         headers = {}
@@ -88,6 +96,12 @@ class HTTPProtocol(BaseProtocol):
 
         if auth_type == "bearer":
             headers["Authorization"] = f"Bearer {auth.get('token', '')}"
+        elif auth_type == "basic":
+            import base64
+            credentials = base64.b64encode(
+                f"{auth.get('username', '')}:{auth.get('password', '')}".encode()
+            ).decode()
+            headers["Authorization"] = f"Basic {credentials}"
         elif auth_type == "api-key":
             headers[auth.get("header", "X-API-Key")] = auth.get("key", "")
 

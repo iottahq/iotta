@@ -36,10 +36,6 @@ _sub_app_security = HTTPBearer()
 
 
 def _make_auth_dependency(device_group_id: UUID | None):
-    """
-    Returns a FastAPI dependency that checks the Bearer token
-    against JWT, admin token, and group tokens for this specific device.
-    """
     import os
     import secrets
 
@@ -52,7 +48,6 @@ def _make_auth_dependency(device_group_id: UUID | None):
     ):
         token = credentials.credentials
 
-        # NEU: JWT zuerst prüfen
         db: Session = SessionLocal()
         try:
             from src.models.user import User
@@ -68,11 +63,9 @@ def _make_auth_dependency(device_group_id: UUID | None):
         finally:
             db.close()
 
-        # Admin token → always allowed
         if ADMIN_TOKEN and secrets.compare_digest(token.encode(), ADMIN_TOKEN.encode()):
             return
 
-        # Check group tokens
         db: Session = SessionLocal()
         try:
             groups = db.query(Group).all()
@@ -96,6 +89,28 @@ def _make_auth_dependency(device_group_id: UUID | None):
         )
 
     return check_auth
+
+
+def _resolve_plugin_config(plugin: dict) -> tuple[dict, dict]:
+    """
+    Returns (protocols_config, actions) from a device plugin.
+
+    Supports both the new split format (_protocols / _actions)
+    and the legacy single-file format (_config).
+    """
+    # New split format
+    if "_protocols" in plugin or "_actions" in plugin:
+        return (
+            plugin.get("_protocols") or {},
+            plugin.get("_actions") or {},
+        )
+
+    # Legacy single-file format
+    config = plugin.get("_config") or {}
+    return (
+        config.get("protocols") or {},
+        config.get("actions") or {},
+    )
 
 
 class DeviceConnections:
@@ -202,7 +217,6 @@ class DeviceManager:
             del self._connections[key]
         if key in self._apps:
             mount_path = f"/devices/{key}"
-            # Fix: use router.routes (mutable list) instead of the read-only .routes property
             self._root_app.router.routes = [
                 r
                 for r in self._root_app.router.routes
@@ -222,9 +236,10 @@ class DeviceManager:
             dlog.warning(f"Unknown plugin '{plugin_id}' – skipping")
             return
 
-        config = plugin.get("_config", {})
-        if not config:
-            dlog.warning("No config – skipping")
+        protocols_config, actions = _resolve_plugin_config(plugin)
+
+        if not protocols_config and not actions:
+            dlog.warning("No protocols or actions defined – skipping")
             return
 
         credential = (
@@ -240,7 +255,7 @@ class DeviceManager:
 
         resolved_protocols = {
             proto_id: _resolve(proto_config, cred_data)
-            for proto_id, proto_config in config.get("protocols", {}).items()
+            for proto_id, proto_config in protocols_config.items()
         }
 
         connections = DeviceConnections()
@@ -252,11 +267,10 @@ class DeviceManager:
         self._connections[device_id] = connections
         self._plugin_ids[device_id] = plugin_id
 
-        # Build auth dependency scoped to this device's group
         auth_dep = _make_auth_dependency(device.group_id)
 
         sub_app = self._build_sub_app(
-            device, config, cred_data, connections, plugin, auth_dep
+            device, actions, cred_data, connections, plugin, auth_dep
         )
         mount_path = f"/devices/{device_id}"
         self._root_app.mount(mount_path, sub_app)
@@ -265,7 +279,7 @@ class DeviceManager:
         dlog.info(f"Mounted: {device.name} at {mount_path}")
 
     def _build_sub_app(
-        self, device, config, credentials, connections, plugin, auth_dep
+        self, device, actions, credentials, connections, plugin, auth_dep
     ) -> FastAPI:
         meta = {k: v for k, v in plugin.items() if not k.startswith("_")}
         sub_app = FastAPI(
@@ -274,7 +288,6 @@ class DeviceManager:
             version=meta.get("version", "1.0.0"),
             dependencies=[Depends(auth_dep)],
         )
-        actions = config.get("actions", {})
         for action_name, action_def in actions.get("send", {}).items():
             self._register_send(
                 sub_app, action_name, action_def, credentials, connections
@@ -439,7 +452,7 @@ class DeviceManager:
         stream_action.__name__ = f"stream_{name}"
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Helpers
 
 
 def _resolve_str(value: str, context: dict) -> str:

@@ -1,0 +1,108 @@
+# capabilities.yaml – FTP / FTPS Protocol Plugin
+# Defines the standard actions a device plugin can use when depending on this protocol.
+# Referenced by device plugins via: protocol: ftp, method: <action_id>
+
+capabilities:
+    list:
+        label: List Files
+        description: List files and directories at a given path.
+        input:
+        path:
+            type: string
+            required: false
+            default: "/"
+            description: Directory path to list.
+        output:
+        success:
+            type: boolean
+        path:
+            type: string
+        files:
+            type: array
+            items:
+            name:
+                type: string
+            type:
+                type: string
+                enum: [file, dir]
+            size:
+                type: integer
+                description: File size in bytes.
+            date:
+                type: string
+                description: Last modified date (ISO 8601 or MLSD format).
+
+    upload:
+        label: Upload File
+        description: Upload a file to the FTP server. Sent as multipart/form-data.
+        input:
+        path:
+            type: string
+            required: true
+            description: Remote destination path including filename.
+        data:
+            type: bytes
+            required: true
+            description: File content. Triggers multipart upload in the iotta API.
+        output:
+        success:
+            type: boolean
+        path:
+            type: string
+
+    download:
+        label: Download File
+        description: Download a file from the FTP server.
+        input:
+        path:
+            type: string
+            required: true
+            description: Remote file path to download.
+        output:
+        success:
+            type: boolean
+        data:
+            type: bytes
+            description: Raw file content.
+
+    delete:
+        label: Delete File
+        description: Delete a file from the FTP server.
+        input:
+        path:
+            type: string
+            required: true
+            description: Remote file path to delete.
+        output:
+        success:
+            type: boolean
+        path:
+            type: string
+
+    mkdir:
+        label: Create Directory
+        description: Create a directory on the FTP server. Does not fail if it already exists.
+        input:
+        path:
+            type: string
+            required: true
+            description: Remote path of the directory to create.
+        output:
+        success:
+            type: boolean
+        path:
+            type: string
+
+# Notes for device plugin authors:
+#
+# Reference a capability in your config.json like this:
+#
+#   "upload_file": {
+#     "protocol": "ftp",
+#     "method": "upload",          ← must match a capability id above
+#     "label": "Upload File",
+#     "input": { ... }
+#   }
+#
+# The method field maps directly to the action string passed to execute_action().
+# iotta validates at load time that the referenced method exists in capabilities.yaml.
