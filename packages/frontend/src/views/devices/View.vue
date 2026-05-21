@@ -13,13 +13,13 @@ import InfoTable from "./InfoTable.vue";
 const route = useRoute();
 const deviceId = route.params.id as string;
 
-// ── State ──────────────────────────────────────────────────────────────────
+// State
 
 const device = ref<Device | null>(null);
 const credential = ref<Credential | null>(null);
 const group = ref<Group | null>(null);
 const pluginMeta = ref<PluginMeta | null>(null);
-const pluginConfig = ref<Record<string, any> | null>(null);
+const actions = ref<Record<string, any> | null>(null);
 
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -30,20 +30,17 @@ const pinging = ref(false);
 
 const activeTab = ref<"actions" | "info">("actions");
 
-// Sidebar selection
 const selectedAction = ref<string | null>(null);
 
-// Per-action state
 const actionBodies = ref<Record<string, string>>({});
 const actionResults = ref<Record<string, { ok: boolean; data: unknown } | null>>({});
 const actionRunning = ref<Record<string, boolean>>({});
 
-// Streams
 const streamSockets = ref<Record<string, WebSocket>>({});
 const streamMessages = ref<Record<string, unknown[]>>({});
 const streamConnected = ref<Record<string, boolean>>({});
 
-// ── Load ───────────────────────────────────────────────────────────────────
+// Load
 
 onMounted(async () => {
    loading.value = true;
@@ -63,17 +60,25 @@ onMounted(async () => {
        ]);
        credential.value = cred;
        group.value = grp;
-       pluginConfig.value = (pluginDetail as any)._config ?? null;
+
+       // Support both new split format (_actions) and legacy (_config.actions)
+       const detail = pluginDetail as any;
+       if (detail._actions) {
+           actions.value = detail._actions;
+       } else if (detail._config?.actions) {
+           actions.value = detail._config.actions;
+       } else {
+           actions.value = null;
+       }
 
        // Pre-fill bodies from examples
-       for (const [name, def] of Object.entries<any>(pluginConfig.value?.actions?.send ?? {})) {
+       for (const [name, def] of Object.entries<any>(actions.value?.send ?? {})) {
            actionBodies.value[name] = JSON.stringify(def.example ?? {}, null, 2);
        }
-       for (const [name, def] of Object.entries<any>(pluginConfig.value?.actions?.request ?? {})) {
+       for (const [name, def] of Object.entries<any>(actions.value?.request ?? {})) {
            actionBodies.value[`req_${name}`] = def.input?.path?.default ?? "/";
        }
 
-       // Auto-select first action
        const first = allActions.value[0];
        if (first) selectedAction.value = first.name;
 
@@ -89,7 +94,7 @@ onUnmounted(() => {
    for (const ws of Object.values(streamSockets.value)) ws.close();
 });
 
-// ── Ping ───────────────────────────────────────────────────────────────────
+// Ping
 
 async function ping() {
    pinging.value = true;
@@ -105,7 +110,7 @@ async function ping() {
    }
 }
 
-// ── Actions ────────────────────────────────────────────────────────────────
+// Actions
 
 async function runSend(name: string) {
    actionRunning.value[name] = true;
@@ -157,18 +162,18 @@ function toggleStream(name: string) {
    }
 }
 
-// ── Computed ───────────────────────────────────────────────────────────────
+// Computed
 
 const allActions = computed(() => {
-   const cfg = pluginConfig.value?.actions ?? {};
+   const act = actions.value ?? {};
    return [
-       ...Object.entries<any>(cfg.send ?? {}).map(([name, def]) => ({
+       ...Object.entries<any>(act.send ?? {}).map(([name, def]) => ({
            name, label: def.label ?? name, category: "send" as const,
        })),
-       ...Object.entries<any>(cfg.request ?? {}).map(([name, def]) => ({
+       ...Object.entries<any>(act.request ?? {}).map(([name, def]) => ({
            name: `req_${name}`, label: def.label ?? name, category: "request" as const,
        })),
-       ...Object.entries<any>(cfg.stream ?? {}).map(([name, def]) => ({
+       ...Object.entries<any>(act.stream ?? {}).map(([name, def]) => ({
            name, label: def.label ?? name, category: "stream" as const,
        })),
    ];
@@ -178,14 +183,13 @@ const selectedEntry = computed(() =>
    allActions.value.find((a) => a.name === selectedAction.value) ?? null,
 );
 
-// Resolve the raw def + body/result keys based on category
 const selectedDef = computed(() => {
    if (!selectedEntry.value) return null;
-   const cfg = pluginConfig.value?.actions ?? {};
+   const act = actions.value ?? {};
    const { name, category } = selectedEntry.value;
-   if (category === "send") return cfg.send?.[name] ?? null;
-   if (category === "request") return cfg.request?.[name.replace(/^req_/, "")] ?? null;
-   if (category === "stream") return cfg.stream?.[name] ?? null;
+   if (category === "send") return act.send?.[name] ?? null;
+   if (category === "request") return act.request?.[name.replace(/^req_/, "")] ?? null;
+   if (category === "stream") return act.stream?.[name] ?? null;
    return null;
 });
 
@@ -211,7 +215,6 @@ function openDocs() {
    window.open(docsUrl.value, "_blank");
 }
 
-// Info tab rows
 const instanceRows = computed(() => device.value ? [
    { label: "Device ID", value: device.value.id, mono: true },
    { label: "Name",      value: device.value.name },
@@ -230,25 +233,18 @@ const pluginRows = computed(() => pluginMeta.value ? [
 </script>
 
 <template>
-   <!-- Loading -->
    <div v-if="loading" class="flex items-center justify-center h-full text-muted-foreground">
        <RiLoader4Line class="size-5 animate-spin mr-2" />
        <span class="text-xs">Loading…</span>
    </div>
 
-   <!-- Error -->
-   <div
-       v-else-if="error"
-       class="flex items-start gap-2 m-6 rounded-md border border-destructive/30 bg-destructive/5 text-destructive px-3 py-2.5 text-xs"
-   >
+   <div v-else-if="error" class="flex items-start gap-2 m-6 rounded-md border border-destructive/30 bg-destructive/5 text-destructive px-3 py-2.5 text-xs">
        <RiErrorWarningLine class="size-4 shrink-0 mt-px" />
        {{ error }}
    </div>
 
-   <!-- Main -->
    <div v-else-if="device" class="flex flex-col h-full overflow-hidden">
 
-       <!-- Header -->
        <DeviceHeader
            :device="device"
            :plugin-meta="pluginMeta"
@@ -259,7 +255,6 @@ const pluginRows = computed(() => pluginMeta.value ? [
            @ping="ping"
        />
 
-       <!-- Tab bar -->
        <div class="flex items-center gap-px px-6 border-b border-border shrink-0">
            <button
                v-for="tab in [
@@ -268,11 +263,7 @@ const pluginRows = computed(() => pluginMeta.value ? [
                ]"
                :key="tab.id"
                class="flex items-center gap-1.5 px-3 py-2.5 text-xs border-b-2 transition-colors -mb-px"
-               :class="
-                   activeTab === tab.id
-                       ? 'border-primary text-foreground font-medium'
-                       : 'border-transparent text-muted-foreground hover:text-foreground'
-               "
+               :class="activeTab === tab.id ? 'border-primary text-foreground font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'"
                @click="activeTab = tab.id as any"
            >
                <component :is="tab.icon" class="size-3.5" />
@@ -280,18 +271,13 @@ const pluginRows = computed(() => pluginMeta.value ? [
            </button>
        </div>
 
-       <!-- Tab: Actions — two-column layout -->
        <div v-if="activeTab === 'actions'" class="flex flex-1 min-h-0 overflow-hidden">
-
-           <!-- Sidebar -->
            <ActionSidebar
                :actions="allActions"
                :selected="selectedAction"
                :connected-streams="streamConnected"
                @select="selectedAction = $event"
            />
-
-           <!-- Playground -->
            <div class="flex-1 min-w-0 overflow-hidden">
                <ActionPlayground
                    :action-name="selectedEntry?.name ?? null"
@@ -309,25 +295,15 @@ const pluginRows = computed(() => pluginMeta.value ? [
            </div>
        </div>
 
-       <!-- Tab: Info -->
        <div v-if="activeTab === 'info'" class="flex-1 overflow-auto px-6 py-5">
            <div class="flex flex-col gap-5 max-w-lg">
-
                <InfoTable title="Instance" :rows="instanceRows" />
                <InfoTable v-if="pluginMeta" title="Plugin" :rows="pluginRows" />
-
-               <!-- Tags -->
                <div v-if="pluginMeta?.tags?.length" class="flex flex-wrap gap-1.5">
-                   <span
-                       v-for="tag in pluginMeta.tags"
-                       :key="tag"
-                       class="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground"
-                   >
+                   <span v-for="tag in pluginMeta.tags" :key="tag" class="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
                        {{ tag }}
                    </span>
                </div>
-
-               <!-- API Docs -->
                <section class="flex flex-col gap-2">
                    <h2 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">API</h2>
                    <div class="rounded-lg border border-border px-4 py-3 flex items-center justify-between gap-3">
@@ -335,12 +311,7 @@ const pluginRows = computed(() => pluginMeta.value ? [
                            <p class="text-xs font-medium">Swagger UI</p>
                            <p class="text-[10px] text-muted-foreground font-mono mt-0.5 break-all">{{ docsUrl }}</p>
                        </div>
-                       <Button
-                           variant="outline"
-                           size="sm"
-                           class="gap-1.5 shrink-0"
-                           @click="openDocs"
-                       >
+                       <Button variant="outline" size="sm" class="gap-1.5 shrink-0" @click="openDocs">
                            <RiExternalLinkLine class="size-3.5" />
                            Open
                        </Button>
