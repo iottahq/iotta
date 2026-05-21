@@ -1,6 +1,10 @@
 """
 routers/devices.py – CRUD router for devices.
 
+group_id is required when creating a device:
+- If no groups exist at all, the request is rejected with a 409 and a hint to create one first.
+- If groups exist, a valid group_id must be provided.
+
 Group tokens only see and access devices within their group.
 Admin token has full access.
 """
@@ -22,14 +26,14 @@ from src.plugins.loader import plugin_loader
 router = APIRouter(prefix="/devices", tags=["devices"])
 
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
+# Schemas
 
 
 class DeviceCreate(BaseModel):
     name: str
     plugin_id: str
     credential_id: UUID
-    group_id: UUID | None = None
+    group_id: UUID
 
 
 class DeviceUpdate(BaseModel):
@@ -50,7 +54,7 @@ class DeviceRead(BaseModel):
         from_attributes = True
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Helpers
 
 
 def _get_device_manager():
@@ -59,7 +63,7 @@ def _get_device_manager():
     return device_manager
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# Endpoints
 
 
 @router.get("/", response_model=list[DeviceRead])
@@ -99,15 +103,24 @@ async def create_device(
     if not db.query(Credential).filter(Credential.id == body.credential_id).first():
         raise HTTPException(status_code=404, detail="Credential not found")
 
-    if auth is not None:
-        if body.group_id is None or body.group_id != auth.id:
-            raise HTTPException(
-                status_code=403,
-                detail="Group token can only create devices within its own group.",
-            )
+    # Ensure at least one group exists
+    if not db.query(Group).first():
+        raise HTTPException(
+            status_code=409,
+            detail="No groups exist yet. Create a group first before adding a device.",
+        )
 
-    if body.group_id and not db.query(Group).filter(Group.id == body.group_id).first():
+    # Validate the provided group
+    group = db.query(Group).filter(Group.id == body.group_id).first()
+    if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+
+    # Group token can only create devices within its own group
+    if auth is not None and body.group_id != auth.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Group token can only create devices within its own group.",
+        )
 
     device = Device(
         name=body.name,
@@ -119,7 +132,6 @@ async def create_device(
     db.commit()
     db.refresh(device)
 
-    # Mount immediately so the device is reachable without restart
     manager = _get_device_manager()
     if manager:
         await manager.mount(device.id)
@@ -166,7 +178,6 @@ async def update_device(
     db.commit()
     db.refresh(device)
 
-    # Remount so protocol connections reflect the updated config
     manager = _get_device_manager()
     if manager:
         await manager.unmount(device.id)
@@ -186,7 +197,6 @@ async def delete_device(
         raise HTTPException(status_code=404, detail="Device not found")
     require_device_access(device.group_id, auth)
 
-    # Unmount before deleting
     manager = _get_device_manager()
     if manager:
         await manager.unmount(device.id)

@@ -54,7 +54,7 @@ const dragOverGroup = ref<string | null>(null);
 // Hover
 const hoveredSection = ref<number | null>(null);
 
-// New group dialog
+// New group dialog (standalone)
 const showNewGroup = ref(false);
 const newGroupName = ref("");
 const savingGroup = ref(false);
@@ -68,6 +68,10 @@ const newDevicePlugin = ref("");
 const newDeviceCredential = ref("");
 const savingDevice = ref(false);
 const deviceError = ref<string | null>(null);
+
+// Inline group creation inside device dialog
+const creatingGroupInline = ref(false);
+const createGroupInlineError = ref<string | null>(null);
 
 const plugins = ref<{ id: string; name: string }[]>([]);
 const credentials = ref<{ id: string; name: string }[]>([]);
@@ -83,6 +87,7 @@ const tokenCopied = ref(false);
 const deletingGroup = ref(false);
 const editGroupError = ref<string | null>(null);
 const confirmDeleteGroup = ref(false);
+
 // TODO: Unhardcode
 const pluginIconMap: Record<string, Component> = {
     "bambu-lab-a1": RiPrinterLine,
@@ -191,6 +196,7 @@ function toggleSection(idx: number) {
     sections.value[idx].collapsed = !sections.value[idx].collapsed;
 }
 
+// Standalone group creation (from header button)
 async function createGroup() {
     if (!newGroupName.value.trim()) return;
     savingGroup.value = true;
@@ -205,6 +211,23 @@ async function createGroup() {
         groupError.value = e instanceof ApiError ? e.detail : "Failed";
     } finally {
         savingGroup.value = false;
+    }
+}
+
+// Inline group creation inside the device dialog
+async function createGroupInline(name: string) {
+    creatingGroupInline.value = true;
+    createGroupInlineError.value = null;
+    try {
+        const g = await api.groups.create({ name });
+        groups.value.push(g);
+        buildSections();
+        // Auto-select the freshly created group
+        newDeviceTargetGroup.value = g.id;
+    } catch (e) {
+        createGroupInlineError.value = e instanceof ApiError ? e.detail : "Failed";
+    } finally {
+        creatingGroupInline.value = false;
     }
 }
 
@@ -287,11 +310,12 @@ async function deleteGroup() {
 }
 
 function openNewDevice(groupId: string | null) {
-    newDeviceTargetGroup.value = groupId;
+    newDeviceTargetGroup.value = groupId ?? (groups.value[0]?.id ?? null);
     newDeviceName.value = "";
     newDevicePlugin.value = plugins.value[0]?.id ?? "";
     newDeviceCredential.value = credentials.value[0]?.id ?? "";
     deviceError.value = null;
+    createGroupInlineError.value = null;
     showNewDevice.value = true;
 }
 
@@ -299,9 +323,9 @@ async function createDevice() {
     if (
         !newDeviceName.value.trim() ||
         !newDevicePlugin.value ||
-        !newDeviceCredential.value
-    )
-        return;
+        !newDeviceCredential.value ||
+        !newDeviceTargetGroup.value
+    ) return;
     savingDevice.value = true;
     deviceError.value = null;
     try {
@@ -309,7 +333,7 @@ async function createDevice() {
             name: newDeviceName.value.trim(),
             plugin_id: newDevicePlugin.value,
             credential_id: newDeviceCredential.value,
-            group_id: newDeviceTargetGroup.value ?? null,
+            group_id: newDeviceTargetGroup.value,
         });
         devices.value.push({ ...d, online: null });
         buildSections();
@@ -676,11 +700,15 @@ function isDragTarget(s: GroupSection) {
         :plugins="plugins"
         :credentials="credentials"
         :groups="groups"
+        :creating-group="creatingGroupInline"
+        :create-group-error="createGroupInlineError"
         @update:show="showNewDevice = $event"
         @update:name="newDeviceName = $event"
         @update:plugin="newDevicePlugin = $event"
         @update:credential="newDeviceCredential = $event"
+        @update:target-group-id="newDeviceTargetGroup = $event"
         @create="createDevice"
+        @create-group="createGroupInline"
     />
 
     <EditGroupDialog
