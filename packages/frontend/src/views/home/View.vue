@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
+import { useNewDevice } from "@/composables/useNewDevice";
 import { useRouter } from "vue-router";
 import { api, type Device, type Group, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -8,11 +9,15 @@ import NewGroupDialog from "./group/NewDialog.vue";
 import EditGroupDialog from "./group/EditDialog.vue";
 import DeleteGroupDialog from "./group/DeleteDialog.vue";
 import NewDeviceDialog from "./device/NewDialog.vue";
+import ContextMenu from "./ContextMenu.vue";
+import type { ContextMenuItem } from "./ContextMenu.vue";
 import {
     RiAddLine,
     RiArrowDownSLine,
     RiArrowRightSLine,
+    RiDeleteBinLine,
     RiDraggable,
+    RiExternalLinkLine,
     RiGroupLine,
     RiLayoutGridLine,
     RiListCheck2,
@@ -27,6 +32,7 @@ import {
 import type { Component } from "vue";
 
 const router = useRouter();
+const { open: newDeviceOpen, targetGroupId: newDeviceComposableGroupId, closeDialog: closeNewDeviceComposable } = useNewDevice();
 
 interface DeviceWithStatus extends Device {
     online?: boolean | null;
@@ -53,6 +59,14 @@ const dragOverGroup = ref<string | null>(null);
 
 // Hover
 const hoveredSection = ref<number | null>(null);
+
+// Context menu
+const contextMenu = ref<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+
+// Delete device confirm
+const deleteDeviceTarget = ref<DeviceWithStatus | null>(null);
+const deletingDevice = ref(false);
+const deleteDeviceError = ref<string | null>(null);
 
 // New group dialog (standalone)
 const showNewGroup = ref(false);
@@ -85,10 +99,10 @@ const loadingToken = ref(false);
 const rotatingToken = ref(false);
 const tokenCopied = ref(false);
 const deletingGroup = ref(false);
+const deleteGroupTarget = ref<Group | null>(null);
 const editGroupError = ref<string | null>(null);
 const confirmDeleteGroup = ref(false);
 
-// TODO: Unhardcode
 const pluginIconMap: Record<string, Component> = {
     "bambu-lab-a1": RiPrinterLine,
 };
@@ -119,7 +133,6 @@ async function load() {
 function buildSections() {
     const grouped: Record<string, DeviceWithStatus[]> = {};
     const ungrouped: DeviceWithStatus[] = [];
-
     for (const d of devices.value) {
         if (d.group_id) {
             if (!grouped[d.group_id]) grouped[d.group_id] = [];
@@ -128,23 +141,14 @@ function buildSections() {
             ungrouped.push(d);
         }
     }
-
     const result: GroupSection[] = [];
     for (const g of groups.value) {
         const existing = sections.value.find((s) => s.group?.id === g.id);
-        result.push({
-            group: g,
-            devices: grouped[g.id] ?? [],
-            collapsed: existing?.collapsed ?? false,
-        });
+        result.push({ group: g, devices: grouped[g.id] ?? [], collapsed: existing?.collapsed ?? false });
     }
-    if (ungrouped.length > 0 || groups.value.length === 0) {
+    if (ungrouped.length > 0 && groups.value.length > 0) {
         const existing = sections.value.find((s) => s.group === null);
-        result.push({
-            group: null,
-            devices: ungrouped,
-            collapsed: existing?.collapsed ?? false,
-        });
+        result.push({ group: null, devices: ungrouped, collapsed: existing?.collapsed ?? false });
     }
     sections.value = result;
 }
@@ -175,14 +179,20 @@ onMounted(async () => {
     } catch {}
 });
 
+// React to sidebar + button triggering new device dialog
+watch(newDeviceOpen, (val) => {
+    if (val) {
+        openNewDevice(newDeviceComposableGroupId.value);
+        closeNewDeviceComposable();
+    }
+});
+
 const filteredSections = computed(() => {
     const q = search.value.toLowerCase().trim();
     if (!q) return sections.value;
     return sections.value
         .map((s) => {
-            const groupMatches = (s.group?.name ?? "Ungrouped")
-                .toLowerCase()
-                .includes(q);
+            const groupMatches = (s.group?.name ?? "Ungrouped").toLowerCase().includes(q);
             const matchedDevices = groupMatches
                 ? s.devices
                 : s.devices.filter((d) => d.name.toLowerCase().includes(q));
@@ -196,7 +206,57 @@ function toggleSection(idx: number) {
     sections.value[idx].collapsed = !sections.value[idx].collapsed;
 }
 
-// Standalone group creation (from header button)
+// Context menus
+function onGroupContextMenu(e: MouseEvent, section: GroupSection) {
+    if (!section.group) return;
+    const group = section.group;
+    contextMenu.value = {
+        x: e.clientX,
+        y: e.clientY,
+        items: [
+            { label: "Edit", icon: RiPencilLine, action: () => openEditGroup(group) },
+            { label: "", separator: true, action: () => {} },
+            { label: "Delete", icon: RiDeleteBinLine, variant: "destructive", action: () => {
+                deleteGroupTarget.value = group;
+            }},
+        ],
+    };
+}
+
+function onDeviceContextMenu(e: MouseEvent, device: DeviceWithStatus) {
+    e.preventDefault();
+    e.stopPropagation();
+    contextMenu.value = {
+        x: e.clientX,
+        y: e.clientY,
+        items: [
+            { label: "Open", icon: RiExternalLinkLine, action: () => router.push(`/devices/${device.id}`) },
+            { label: "", separator: true, action: () => {} },
+            { label: "Delete", icon: RiDeleteBinLine, variant: "destructive", action: () => {
+                deleteDeviceTarget.value = device;
+            }},
+        ],
+    };
+}
+
+// Delete device
+async function confirmDeleteDevice() {
+    if (!deleteDeviceTarget.value) return;
+    deletingDevice.value = true;
+    deleteDeviceError.value = null;
+    try {
+        await api.devices.delete(deleteDeviceTarget.value.id);
+        devices.value = devices.value.filter((d) => d.id !== deleteDeviceTarget.value!.id);
+        buildSections();
+        deleteDeviceTarget.value = null;
+    } catch (e) {
+        deleteDeviceError.value = e instanceof ApiError ? e.detail : "Failed to delete";
+    } finally {
+        deletingDevice.value = false;
+    }
+}
+
+// Group CRUD
 async function createGroup() {
     if (!newGroupName.value.trim()) return;
     savingGroup.value = true;
@@ -214,7 +274,6 @@ async function createGroup() {
     }
 }
 
-// Inline group creation inside the device dialog
 async function createGroupInline(name: string) {
     creatingGroupInline.value = true;
     createGroupInlineError.value = null;
@@ -222,7 +281,6 @@ async function createGroupInline(name: string) {
         const g = await api.groups.create({ name });
         groups.value.push(g);
         buildSections();
-        // Auto-select the freshly created group
         newDeviceTargetGroup.value = g.id;
     } catch (e) {
         createGroupInlineError.value = e instanceof ApiError ? e.detail : "Failed";
@@ -257,9 +315,7 @@ async function saveGroupName() {
     savingGroupName.value = true;
     editGroupError.value = null;
     try {
-        const updated = await api.groups.update(editGroup.value.id, {
-            name: editGroupName.value.trim(),
-        });
+        const updated = await api.groups.update(editGroup.value.id, { name: editGroupName.value.trim() });
         const g = groups.value.find((x) => x.id === updated.id);
         if (g) g.name = updated.name;
         editGroup.value = { ...editGroup.value, name: updated.name };
@@ -292,15 +348,17 @@ async function copyToken() {
 }
 
 async function deleteGroup() {
-    if (!editGroup.value) return;
+    const target = deleteGroupTarget.value ?? editGroup.value;
+    if (!target) return;
     deletingGroup.value = true;
     try {
-        await api.groups.delete(editGroup.value.id);
-        groups.value = groups.value.filter((g) => g.id !== editGroup.value!.id);
+        await api.groups.delete(target.id);
+        groups.value = groups.value.filter((g) => g.id !== target.id);
         for (const d of devices.value) {
-            if (d.group_id === editGroup.value.id) d.group_id = null;
+            if (d.group_id === target.id) d.group_id = null;
         }
         buildSections();
+        deleteGroupTarget.value = null;
         closeEditGroup();
     } catch (e) {
         editGroupError.value = e instanceof ApiError ? e.detail : "Failed";
@@ -320,12 +378,7 @@ function openNewDevice(groupId: string | null) {
 }
 
 async function createDevice() {
-    if (
-        !newDeviceName.value.trim() ||
-        !newDevicePlugin.value ||
-        !newDeviceCredential.value ||
-        !newDeviceTargetGroup.value
-    ) return;
+    if (!newDeviceName.value.trim() || !newDevicePlugin.value || !newDeviceCredential.value || !newDeviceTargetGroup.value) return;
     savingDevice.value = true;
     deviceError.value = null;
     try {
@@ -341,10 +394,7 @@ async function createDevice() {
         try {
             const result = await api.devices.ping(d.id);
             const dev = devices.value.find((x) => x.id === d.id);
-            if (dev) {
-                dev.online = result.online;
-                buildSections();
-            }
+            if (dev) { dev.online = result.online; buildSections(); }
         } catch {}
     } catch (e) {
         deviceError.value = e instanceof ApiError ? e.detail : "Failed";
@@ -353,19 +403,9 @@ async function createDevice() {
     }
 }
 
-function onDragStart(deviceId: string) {
-    dragging.value = deviceId;
-}
-
-function onDragOver(e: DragEvent, groupId: string | null) {
-    e.preventDefault();
-    dragOverGroup.value = groupId ?? "ungrouped";
-}
-
-function onDragLeave() {
-    dragOverGroup.value = null;
-}
-
+function onDragStart(deviceId: string) { dragging.value = deviceId; }
+function onDragOver(e: DragEvent, groupId: string | null) { e.preventDefault(); dragOverGroup.value = groupId ?? "ungrouped"; }
+function onDragLeave() { dragOverGroup.value = null; }
 async function onDrop(e: DragEvent, groupId: string | null) {
     e.preventDefault();
     dragOverGroup.value = null;
@@ -377,28 +417,13 @@ async function onDrop(e: DragEvent, groupId: string | null) {
     const old = dev.group_id;
     dev.group_id = groupId;
     buildSections();
-    try {
-        await api.devices.update(deviceId, { group_id: groupId });
-    } catch {
-        dev.group_id = old;
-        buildSections();
-    }
+    try { await api.devices.update(deviceId, { group_id: groupId }); }
+    catch { dev.group_id = old; buildSections(); }
 }
-
-function onDragEnd() {
-    dragging.value = null;
-    dragOverGroup.value = null;
-}
-
-function sectionKey(s: GroupSection) {
-    return s.group?.id ?? "ungrouped";
-}
-
+function onDragEnd() { dragging.value = null; dragOverGroup.value = null; }
+function sectionKey(s: GroupSection) { return s.group?.id ?? "ungrouped"; }
 function isDragTarget(s: GroupSection) {
-    return (
-        dragOverGroup.value === (s.group?.id ?? "ungrouped") &&
-        dragging.value !== null
-    );
+    return dragOverGroup.value === (s.group?.id ?? "ungrouped") && dragging.value !== null;
 }
 </script>
 
@@ -408,33 +433,13 @@ function isDragTarget(s: GroupSection) {
         <div class="flex items-center justify-between gap-4 px-6 py-4 border-b border-border">
             <div>
                 <h1 class="text-sm font-semibold">Devices</h1>
-                <p class="text-xs text-muted-foreground mt-0.5">
-                    Manage your connected devices
-                </p>
+                <p class="text-xs text-muted-foreground mt-0.5">Manage your connected devices</p>
             </div>
             <div class="flex items-center gap-px bg-muted rounded-md p-0.5">
-                <button
-                    @click="viewMode = 'grid'"
-                    :class="[
-                        'flex items-center justify-center w-7 h-7 rounded text-xs transition-colors',
-                        viewMode === 'grid'
-                            ? 'bg-background text-foreground shadow-xs'
-                            : 'text-muted-foreground hover:text-foreground',
-                    ]"
-                    aria-label="Grid view"
-                >
+                <button @click="viewMode = 'grid'" :class="['flex items-center justify-center w-7 h-7 rounded text-xs transition-colors', viewMode === 'grid' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground']" aria-label="Grid view">
                     <RiLayoutGridLine class="size-3.5" />
                 </button>
-                <button
-                    @click="viewMode = 'list'"
-                    :class="[
-                        'flex items-center justify-center w-7 h-7 rounded text-xs transition-colors',
-                        viewMode === 'list'
-                            ? 'bg-background text-foreground shadow-xs'
-                            : 'text-muted-foreground hover:text-foreground',
-                    ]"
-                    aria-label="List view"
-                >
+                <button @click="viewMode = 'list'" :class="['flex items-center justify-center w-7 h-7 rounded text-xs transition-colors', viewMode === 'list' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground']" aria-label="List view">
                     <RiListCheck2 class="size-3.5" />
                 </button>
             </div>
@@ -444,22 +449,11 @@ function isDragTarget(s: GroupSection) {
         <div class="relative flex items-center px-6 py-3 border-b border-border">
             <div class="flex-1" />
             <div class="relative w-64">
-                <RiSearchLine
-                    class="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none"
-                />
-                <Input
-                    v-model="search"
-                    placeholder="Search…"
-                    class="pl-7 h-7 text-xs w-full"
-                />
+                <RiSearchLine class="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+                <Input v-model="search" placeholder="Search…" class="pl-7 h-7 text-xs w-full" />
             </div>
             <div class="flex-1 flex items-center justify-end gap-2">
-                <Button
-                    variant="outline"
-                    size="sm"
-                    class="gap-1.5"
-                    @click="showNewGroup = true"
-                >
+                <Button variant="outline" size="sm" class="gap-1.5" @click="showNewGroup = true">
                     <RiGroupLine class="size-3.5" />
                     New group
                 </Button>
@@ -468,18 +462,12 @@ function isDragTarget(s: GroupSection) {
 
         <!-- Content -->
         <div class="flex-1 overflow-auto px-6 py-4 flex flex-col gap-4">
-            <div
-                v-if="loading"
-                class="flex items-center justify-center py-16 text-muted-foreground"
-            >
+            <div v-if="loading" class="flex items-center justify-center py-16 text-muted-foreground">
                 <RiLoader4Line class="size-5 animate-spin mr-2" />
                 <span class="text-xs">Loading devices…</span>
             </div>
 
-            <div
-                v-else-if="error"
-                class="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 text-destructive px-3 py-2.5 text-xs"
-            >
+            <div v-else-if="error" class="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 text-destructive px-3 py-2.5 text-xs">
                 <RiErrorWarningLine class="size-4 shrink-0 mt-px" />
                 {{ error }}
             </div>
@@ -497,42 +485,20 @@ function isDragTarget(s: GroupSection) {
                 >
                     <!-- Group header -->
                     <div
-                        class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50"
+                        class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50 select-none"
                         :class="isDragTarget(section) ? 'bg-primary/10 ring-1 ring-primary/30' : ''"
+                        @contextmenu.prevent="onGroupContextMenu($event, section)"
                     >
-                        <button
-                            class="flex items-center gap-1.5 text-xs font-medium text-foreground min-w-0 flex-1"
-                            @click="toggleSection(idx)"
-                        >
-                            <component
-                                :is="section.collapsed ? RiArrowRightSLine : RiArrowDownSLine"
-                                class="size-3.5 text-muted-foreground shrink-0"
-                            />
+                        <button class="flex items-center gap-1.5 text-xs font-medium text-foreground min-w-0 flex-1" @click="toggleSection(idx)" @contextmenu.prevent.stop="onGroupContextMenu($event, section)">
+                            <component :is="section.collapsed ? RiArrowRightSLine : RiArrowDownSLine" class="size-3.5 text-muted-foreground shrink-0" />
                             <span class="truncate">{{ section.group?.name ?? "Ungrouped" }}</span>
                             <span class="text-muted-foreground font-normal tabular-nums">{{ section.devices.length }}</span>
                         </button>
-                        <div
-                            class="flex items-center gap-0.5 shrink-0"
-                            :style="{
-                                opacity: hoveredSection === idx ? '1' : '0',
-                                transition: 'opacity 0.15s ease',
-                            }"
-                        >
-                            <Button
-                                v-if="section.group"
-                                variant="ghost"
-                                size="icon"
-                                class="size-6"
-                                @click.stop="openEditGroup(section.group)"
-                            >
+                        <div class="flex items-center gap-0.5 shrink-0" :style="{ opacity: hoveredSection === idx ? '1' : '0', transition: 'opacity 0.15s ease' }">
+                            <Button v-if="section.group" variant="ghost" size="icon" class="size-6" @click.stop="openEditGroup(section.group)">
                                 <RiPencilLine class="size-3.5" />
                             </Button>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                class="size-6"
-                                @click="openNewDevice(section.group?.id ?? null)"
-                            >
+                            <Button variant="ghost" size="icon" class="size-6" @click="openNewDevice(section.group?.id ?? null)">
                                 <RiAddLine class="size-3.5" />
                             </Button>
                         </div>
@@ -541,22 +507,12 @@ function isDragTarget(s: GroupSection) {
                     <!-- Devices -->
                     <div
                         v-if="!section.collapsed"
-                        :class="[
-                            viewMode === 'grid' ? 'grid gap-2' : 'flex flex-col gap-1.5',
-                        ]"
-                        :style="
-                            viewMode === 'grid'
-                                ? 'grid-template-columns: repeat(auto-fill, minmax(220px, 1fr))'
-                                : ''
-                        "
+                        :class="[viewMode === 'grid' ? 'grid gap-2' : 'flex flex-col gap-1.5']"
+                        :style="viewMode === 'grid' ? 'grid-template-columns: repeat(auto-fill, minmax(220px, 1fr))' : ''"
                     >
                         <div
                             v-if="section.devices.length === 0"
-                            :class="[
-                                'flex items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground transition-colors',
-                                viewMode === 'grid' ? 'h-24 col-span-full' : 'h-12',
-                                isDragTarget(section) ? 'border-primary/50 bg-primary/5 text-primary' : '',
-                            ]"
+                            :class="['flex items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground transition-colors', viewMode === 'grid' ? 'h-24 col-span-full' : 'h-12', isDragTarget(section) ? 'border-primary/50 bg-primary/5 text-primary' : '']"
                         >
                             {{ isDragTarget(section) ? "Drop here" : "No devices" }}
                         </div>
@@ -568,77 +524,31 @@ function isDragTarget(s: GroupSection) {
                             @dragstart="onDragStart(device.id)"
                             @dragend="onDragEnd"
                             @click="router.push(`/devices/${device.id}`)"
-                            :class="[
-                                'group flex cursor-pointer rounded-lg border border-border bg-card transition-all hover:border-primary/40 hover:shadow-sm',
-                                dragging === device.id ? 'opacity-40 scale-95' : '',
-                                viewMode === 'grid'
-                                    ? 'flex-col overflow-hidden'
-                                    : 'flex-row items-center gap-3 px-3 py-2',
-                            ]"
+                            @contextmenu="onDeviceContextMenu($event, device)"
+                            :class="['group flex cursor-pointer rounded-lg border border-border bg-card transition-all hover:border-primary/40 hover:shadow-sm', dragging === device.id ? 'opacity-40 scale-95' : '', viewMode === 'grid' ? 'flex-col overflow-hidden' : 'flex-row items-center gap-3 px-3 py-2']"
                         >
-                            <!-- Grid preview -->
-                            <div
-                                v-if="viewMode === 'grid'"
-                                class="flex items-center justify-center h-28 bg-muted/30 border-b border-border relative"
-                            >
-                                <component
-                                    :is="getPluginIcon(device.plugin_id)"
-                                    class="size-10 text-muted-foreground/40"
-                                />
-                                <div
-                                    class="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground cursor-grab"
-                                >
+                            <!-- Grid -->
+                            <div v-if="viewMode === 'grid'" class="flex items-center justify-center h-28 bg-muted/30 border-b border-border relative">
+                                <component :is="getPluginIcon(device.plugin_id)" class="size-10 text-muted-foreground/40" />
+                                <div class="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground cursor-grab">
                                     <RiDraggable class="size-3.5" />
                                 </div>
-                                <span
-                                    class="absolute top-2 right-2 block size-2 rounded-full"
-                                    :class="
-                                        device.online === null
-                                            ? 'bg-muted-foreground/30 animate-pulse'
-                                            : device.online
-                                                ? 'bg-emerald-500'
-                                                : 'bg-zinc-400'
-                                    "
-                                />
+                                <span class="absolute top-2 right-2 block size-2 rounded-full" :class="device.online === null ? 'bg-muted-foreground/30 animate-pulse' : device.online ? 'bg-emerald-500' : 'bg-zinc-400'" />
                             </div>
-                            <div
-                                v-if="viewMode === 'grid'"
-                                class="flex flex-col gap-0.5 px-3 py-2.5"
-                            >
+                            <div v-if="viewMode === 'grid'" class="flex flex-col gap-0.5 px-3 py-2.5">
                                 <span class="text-xs font-semibold text-foreground truncate">{{ device.name }}</span>
                                 <span class="text-[10px] text-muted-foreground font-mono truncate">{{ device.plugin_id }}</span>
                             </div>
 
                             <!-- List -->
-                            <component
-                                v-if="viewMode === 'list'"
-                                :is="getPluginIcon(device.plugin_id)"
-                                class="size-4 text-muted-foreground shrink-0"
-                            />
-                            <div
-                                v-if="viewMode === 'list'"
-                                class="flex-1 min-w-0 flex items-center gap-2"
-                            >
+                            <component v-if="viewMode === 'list'" :is="getPluginIcon(device.plugin_id)" class="size-4 text-muted-foreground shrink-0" />
+                            <div v-if="viewMode === 'list'" class="flex-1 min-w-0 flex items-center gap-2">
                                 <span class="text-xs font-medium text-foreground truncate">{{ device.name }}</span>
                                 <span class="text-[10px] text-muted-foreground font-mono truncate hidden sm:block">{{ device.plugin_id }}</span>
                             </div>
-                            <div
-                                v-if="viewMode === 'list'"
-                                class="flex items-center gap-2 shrink-0"
-                            >
-                                <span
-                                    class="block size-1.5 rounded-full"
-                                    :class="
-                                        device.online === null
-                                            ? 'bg-muted-foreground/30 animate-pulse'
-                                            : device.online
-                                                ? 'bg-emerald-500'
-                                                : 'bg-zinc-400'
-                                    "
-                                />
-                                <div
-                                    class="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground cursor-grab"
-                                >
+                            <div v-if="viewMode === 'list'" class="flex items-center gap-2 shrink-0">
+                                <span class="block size-1.5 rounded-full" :class="device.online === null ? 'bg-muted-foreground/30 animate-pulse' : device.online ? 'bg-emerald-500' : 'bg-zinc-400'" />
+                                <div class="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground cursor-grab">
                                     <RiDraggable class="size-3.5" />
                                 </div>
                             </div>
@@ -647,16 +557,11 @@ function isDragTarget(s: GroupSection) {
                 </div>
 
                 <!-- Empty -->
-                <div
-                    v-if="sections.length === 0"
-                    class="flex flex-col items-center justify-center py-20 text-center gap-3"
-                >
+                <div v-if="sections.length === 0" class="flex flex-col items-center justify-center py-20 text-center gap-3">
                     <RiPlugLine class="size-10 text-muted-foreground/30" />
                     <div>
                         <p class="text-xs font-medium text-foreground">No devices yet</p>
-                        <p class="text-xs text-muted-foreground mt-0.5">
-                            Create a group and add your first device
-                        </p>
+                        <p class="text-xs text-muted-foreground mt-0.5">Create a group and add your first device</p>
                     </div>
                     <Button size="sm" class="gap-1.5 mt-1" @click="openNewDevice(null)">
                         <RiAddLine class="size-3.5" />
@@ -665,74 +570,62 @@ function isDragTarget(s: GroupSection) {
                 </div>
 
                 <!-- No search results -->
-                <div
-                    v-else-if="filteredSections.length === 0"
-                    class="flex flex-col items-center justify-center py-20 text-center gap-2"
-                >
+                <div v-else-if="filteredSections.length === 0" class="flex flex-col items-center justify-center py-20 text-center gap-2">
                     <RiSearchLine class="size-8 text-muted-foreground/30" />
-                    <p class="text-xs text-muted-foreground">
-                        No results for
-                        <span class="font-medium text-foreground">"{{ search }}"</span>
-                    </p>
+                    <p class="text-xs text-muted-foreground">No results for <span class="font-medium text-foreground">"{{ search }}"</span></p>
                 </div>
             </template>
         </div>
     </div>
 
-    <NewGroupDialog
-        :show="showNewGroup"
-        :name="newGroupName"
-        :saving="savingGroup"
-        :error="groupError"
-        @update:show="showNewGroup = $event"
-        @update:name="newGroupName = $event"
-        @create="createGroup"
+    <!-- Context menu -->
+    <ContextMenu
+        v-if="contextMenu"
+        :x="contextMenu.x"
+        :y="contextMenu.y"
+        :items="contextMenu.items"
+        @close="contextMenu = null"
     />
 
-    <NewDeviceDialog
-        :show="showNewDevice"
-        :target-group-id="newDeviceTargetGroup"
-        :name="newDeviceName"
-        :plugin="newDevicePlugin"
-        :credential="newDeviceCredential"
-        :saving="savingDevice"
-        :error="deviceError"
-        :plugins="plugins"
-        :credentials="credentials"
-        :groups="groups"
-        :creating-group="creatingGroupInline"
-        :create-group-error="createGroupInlineError"
-        @update:show="showNewDevice = $event"
-        @update:name="newDeviceName = $event"
-        @update:plugin="newDevicePlugin = $event"
-        @update:credential="newDeviceCredential = $event"
-        @update:target-group-id="newDeviceTargetGroup = $event"
-        @create="createDevice"
-        @create-group="createGroupInline"
-    />
+    <!-- Delete device confirm -->
+    <Teleport to="body">
+        <Transition name="fade">
+            <div v-if="deleteDeviceTarget" class="fixed inset-0 z-[60] flex items-center justify-center">
+                <div class="absolute inset-0 bg-black/50" @click="deleteDeviceTarget = null" />
+                <div class="relative z-10 w-full max-w-xs rounded-xl border border-border bg-card shadow-xl px-6 py-5 mx-4">
+                    <h2 class="text-sm font-semibold">Delete device?</h2>
+                    <p class="text-xs text-muted-foreground mt-1.5">
+                        <span class="font-medium text-foreground">{{ deleteDeviceTarget.name }}</span>
+                        will be permanently deleted and disconnected.
+                    </p>
+                    <div v-if="deleteDeviceError" class="mt-2 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 text-destructive px-3 py-2 text-xs">
+                        <RiErrorWarningLine class="size-3.5 shrink-0 mt-px" />
+                        {{ deleteDeviceError }}
+                    </div>
+                    <div class="flex gap-2 justify-end mt-4">
+                        <Button variant="outline" size="sm" @click="deleteDeviceTarget = null">Cancel</Button>
+                        <Button variant="destructive" size="sm" class="gap-1.5" :disabled="deletingDevice" @click="confirmDeleteDevice">
+                            <RiLoader4Line v-if="deletingDevice" class="size-3.5 animate-spin" />
+                            <RiDeleteBinLine v-else class="size-3.5" />
+                            Delete
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </Transition>
+    </Teleport>
 
-    <EditGroupDialog
-        :group="editGroup"
-        :name="editGroupName"
-        :saving-name="savingGroupName"
-        :token="groupToken"
-        :loading-token="loadingToken"
-        :rotating-token="rotatingToken"
-        :token-copied="tokenCopied"
-        :error="editGroupError"
-        @update:name="editGroupName = $event"
-        @save-name="saveGroupName"
-        @rotate-token="rotateToken"
-        @copy-token="copyToken"
-        @close="closeEditGroup"
-        @delete="confirmDeleteGroup = true"
-    />
+    <NewGroupDialog :show="showNewGroup" :name="newGroupName" :saving="savingGroup" :error="groupError" @update:show="showNewGroup = $event" @update:name="newGroupName = $event" @create="createGroup" />
 
-    <DeleteGroupDialog
-        :show="confirmDeleteGroup"
-        :group="editGroup"
-        :deleting="deletingGroup"
-        @cancel="confirmDeleteGroup = false"
-        @confirm="deleteGroup"
-    />
+    <NewDeviceDialog :show="showNewDevice" :target-group-id="newDeviceTargetGroup" :name="newDeviceName" :plugin="newDevicePlugin" :credential="newDeviceCredential" :saving="savingDevice" :error="deviceError" :plugins="plugins" :credentials="credentials" :groups="groups" :creating-group="creatingGroupInline" :create-group-error="createGroupInlineError" @update:show="showNewDevice = $event" @update:name="newDeviceName = $event" @update:plugin="newDevicePlugin = $event" @update:credential="newDeviceCredential = $event" @update:target-group-id="newDeviceTargetGroup = $event" @create="createDevice" @create-group="createGroupInline" />
+
+    <EditGroupDialog :group="editGroup" :name="editGroupName" :saving-name="savingGroupName" :token="groupToken" :loading-token="loadingToken" :rotating-token="rotatingToken" :token-copied="tokenCopied" :error="editGroupError" @update:name="editGroupName = $event" @save-name="saveGroupName" @rotate-token="rotateToken" @copy-token="copyToken" @close="closeEditGroup" @delete="confirmDeleteGroup = true" />
+
+    <DeleteGroupDialog :show="confirmDeleteGroup || !!deleteGroupTarget" :group="deleteGroupTarget ?? editGroup" :deleting="deletingGroup" @cancel="deleteGroupTarget = null; confirmDeleteGroup = false" @confirm="deleteGroup" />
+
 </template>
+
+<style scoped>
+.fade-enter-active, .fade-leave-active { transition: opacity 0.15s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+</style>

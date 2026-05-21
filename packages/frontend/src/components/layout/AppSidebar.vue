@@ -37,10 +37,12 @@ import {
 } from "@remixicon/vue";
 import type { Component } from "vue";
 import { tokenStore } from "@/lib/api";
+import { useNewDevice } from "@/composables/useNewDevice";
 
 const router = useRouter();
 const route = useRoute();
 const { state, toggleSidebar } = useSidebar();
+const { openDialog } = useNewDevice();
 
 const isCollapsed = () => state.value === "collapsed";
 const showSettingsMenu = ref(false);
@@ -102,13 +104,13 @@ const isSettingsActive = () =>
                 >
                     <Tooltip v-if="isCollapsed()">
                         <TooltipTrigger as-child>
-                            <Button variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="navigate('/')" aria-label="Add device">
+                            <Button variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="openDialog()" aria-label="Add device">
                                 <RiAddLine class="size-4" />
                             </Button>
                         </TooltipTrigger>
                         <TooltipContent side="right">Add device</TooltipContent>
                     </Tooltip>
-                    <Button v-else variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="navigate('/')" aria-label="Add device">
+                    <Button v-else variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="openDialog()" aria-label="Add device">
                         <RiAddLine class="size-4" />
                     </Button>
 
@@ -230,20 +232,11 @@ const isSettingsActive = () =>
 
                     <!-- Settings with popover -->
                     <SidebarMenuItem class="relative">
-                        <!-- Click-away overlay -->
-                        <div
-                            v-if="showSettingsMenu"
-                            class="fixed inset-0 z-40"
-                            @click="closeSettings"
-                        />
+                        <div v-if="showSettingsMenu" class="fixed inset-0 z-40" @click="closeSettings" />
 
                         <Tooltip v-if="isCollapsed()">
                             <TooltipTrigger as-child>
-                                <SidebarMenuButton
-                                    :is-active="isSettingsActive()"
-                                    @click="toggleSettings"
-                                    aria-label="Settings"
-                                >
+                                <SidebarMenuButton :is-active="isSettingsActive()" @click="toggleSettings" aria-label="Settings">
                                     <RiSettings3Line class="size-4" />
                                     <span>Settings</span>
                                 </SidebarMenuButton>
@@ -255,33 +248,21 @@ const isSettingsActive = () =>
                             <span>Settings</span>
                         </SidebarMenuButton>
 
-                        <!-- Popover menu -->
                         <Transition name="popup">
                             <div
                                 v-if="showSettingsMenu"
                                 class="absolute bottom-full left-0 mb-1 z-50 min-w-[160px] rounded-lg border border-border bg-popover shadow-lg py-1 overflow-hidden"
                             >
-                                <button
-                                    @click="navigate('/settings')"
-                                    class="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-foreground hover:bg-muted/70 transition-colors"
-                                    :class="route.path === '/settings' ? 'bg-muted/50 font-medium' : ''"
-                                >
+                                <button @click="navigate('/settings')" class="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-foreground hover:bg-muted/70 transition-colors" :class="route.path === '/settings' ? 'bg-muted/50 font-medium' : ''">
                                     <RiSettings3Line class="size-3.5 text-muted-foreground" />
                                     Settings
                                 </button>
-                                <button
-                                    @click="navigate('/credentials')"
-                                    class="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-foreground hover:bg-muted/70 transition-colors"
-                                    :class="route.path === '/credentials' ? 'bg-muted/50 font-medium' : ''"
-                                >
+                                <button @click="navigate('/credentials')" class="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-foreground hover:bg-muted/70 transition-colors" :class="route.path === '/credentials' ? 'bg-muted/50 font-medium' : ''">
                                     <RiKeyLine class="size-3.5 text-muted-foreground" />
                                     Credentials
                                 </button>
                                 <div class="my-1 h-px bg-border mx-2" />
-                                <button
-                                    @click="logout"
-                                    class="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors"
-                                >
+                                <button @click="logout" class="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors">
                                     <RiLogoutBoxLine class="size-3.5" />
                                     Logout
                                 </button>
