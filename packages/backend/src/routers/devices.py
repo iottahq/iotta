@@ -1,12 +1,8 @@
 """
 routers/devices.py – CRUD router for devices.
 
-group_id is required when creating a device:
-- If no groups exist at all, the request is rejected with a 409 and a hint to create one first.
-- If groups exist, a valid group_id must be provided.
-
-Group tokens only see and access devices within their group.
-Admin token has full access.
+group_id is required when creating or updating a device.
+A device must always belong to a group.
 """
 
 import asyncio
@@ -48,7 +44,7 @@ class DeviceRead(BaseModel):
     name: str
     plugin_id: str
     credential_id: UUID
-    group_id: UUID | None
+    group_id: UUID  # never null
 
     class Config:
         from_attributes = True
@@ -72,7 +68,7 @@ def list_devices(
     auth: Group | None = Depends(require_auth),
 ):
     if auth is None:
-        return db.query(Device).all()
+        return db.query(Device).filter(Device.group_id.isnot(None)).all()
     return db.query(Device).filter(Device.group_id == auth.id).all()
 
 
@@ -103,19 +99,16 @@ async def create_device(
     if not db.query(Credential).filter(Credential.id == body.credential_id).first():
         raise HTTPException(status_code=404, detail="Credential not found")
 
-    # Ensure at least one group exists
     if not db.query(Group).first():
         raise HTTPException(
             status_code=409,
             detail="No groups exist yet. Create a group first before adding a device.",
         )
 
-    # Validate the provided group
     group = db.query(Group).filter(Group.id == body.group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Group token can only create devices within its own group
     if auth is not None and body.group_id != auth.id:
         raise HTTPException(
             status_code=403,
@@ -168,7 +161,8 @@ async def update_device(
             raise HTTPException(
                 status_code=403, detail="Cannot move device to a different group."
             )
-        if not db.query(Group).filter(Group.id == body.group_id).first():
+        group = db.query(Group).filter(Group.id == body.group_id).first()
+        if not group:
             raise HTTPException(status_code=404, detail="Group not found")
         device.group_id = body.group_id
 

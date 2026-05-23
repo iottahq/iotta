@@ -86,6 +86,13 @@ function closeSettings() {
     showSettingsMenu.value = false;
 }
 
+async function handleAddDevice() {
+    if (route.path !== "/") {
+        await router.push("/");
+    }
+    openDialog();
+}
+
 const isSettingsActive = () =>
     route.path === "/settings" || route.path === "/credentials";
 </script>
@@ -104,13 +111,13 @@ const isSettingsActive = () =>
                 >
                     <Tooltip v-if="isCollapsed()">
                         <TooltipTrigger as-child>
-                            <Button variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="openDialog()" aria-label="Add device">
+                            <Button variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="handleAddDevice" aria-label="Add device">
                                 <RiAddLine class="size-4" />
                             </Button>
                         </TooltipTrigger>
                         <TooltipContent side="right">Add device</TooltipContent>
                     </Tooltip>
-                    <Button v-else variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="openDialog()" aria-label="Add device">
+                    <Button v-else variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="handleAddDevice" aria-label="Add device">
                         <RiAddLine class="size-4" />
                     </Button>
 

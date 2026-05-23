@@ -40,7 +40,7 @@ interface DeviceWithStatus extends Device {
 }
 
 interface GroupSection {
-    group: Group | null;
+    group: Group;
     devices: DeviceWithStatus[];
     collapsed: boolean;
 }
@@ -82,7 +82,6 @@ const createGroupInlineError = ref<string | null>(null);
 const plugins = ref<{ id: string; name: string }[]>([]);
 const credentials = ref<{ id: string; name: string }[]>([]);
 
-// Credential dialog – reuse the existing one from credentials view
 const showNewCredential = ref(false);
 const credentialTemplates = ref<{ id: string; name: string; fields: { field: string; type: string; label: string }[] }[]>([]);
 const creatingCredential = ref(false);
@@ -129,23 +128,14 @@ async function load() {
 
 function buildSections() {
     const grouped: Record<string, DeviceWithStatus[]> = {};
-    const ungrouped: DeviceWithStatus[] = [];
     for (const d of devices.value) {
-        if (d.group_id) {
-            if (!grouped[d.group_id]) grouped[d.group_id] = [];
-            grouped[d.group_id].push(d);
-        } else {
-            ungrouped.push(d);
-        }
+        if (!grouped[d.group_id]) grouped[d.group_id] = [];
+        grouped[d.group_id].push(d);
     }
     const result: GroupSection[] = [];
     for (const g of groups.value) {
-        const existing = sections.value.find((s) => s.group?.id === g.id);
+        const existing = sections.value.find((s) => s.group.id === g.id);
         result.push({ group: g, devices: grouped[g.id] ?? [], collapsed: existing?.collapsed ?? false });
-    }
-    if (ungrouped.length > 0 && groups.value.length > 0) {
-        const existing = sections.value.find((s) => s.group === null);
-        result.push({ group: null, devices: ungrouped, collapsed: existing?.collapsed ?? false });
     }
     sections.value = result;
 }
@@ -174,7 +164,6 @@ onMounted(async () => {
         plugins.value = p.items.map((x) => ({ id: x.id, name: x.name }));
         credentials.value = c.map((x) => ({ id: x.id, name: x.name }));
 
-        // Build credential templates from plugin definitions
         const templateList: typeof credentialTemplates.value = [];
         for (const plugin of p.items) {
             const detail = await api.plugins.devices.get(plugin.id).catch(() => null);
@@ -190,8 +179,9 @@ onMounted(async () => {
 
 watch(newDeviceOpen, (val) => {
     if (val) {
-        openNewDevice(newDeviceComposableGroupId.value);
+        const groupId = newDeviceComposableGroupId.value;
         closeNewDeviceComposable();
+        openNewDevice(groupId);
     }
 });
 
@@ -200,7 +190,7 @@ const filteredSections = computed(() => {
     if (!q) return sections.value;
     return sections.value
         .map((s) => {
-            const groupMatches = (s.group?.name ?? "Ungrouped").toLowerCase().includes(q);
+            const groupMatches = s.group.name.toLowerCase().includes(q);
             const matchedDevices = groupMatches
                 ? s.devices
                 : s.devices.filter((d) => d.name.toLowerCase().includes(q));
@@ -215,7 +205,6 @@ function toggleSection(idx: number) {
 }
 
 function onGroupContextMenu(e: MouseEvent, section: GroupSection) {
-    if (!section.group) return;
     const group = section.group;
     contextMenu.value = {
         x: e.clientX, y: e.clientY,
@@ -266,6 +255,7 @@ async function createGroup() {
         buildSections();
         showNewGroup.value = false;
         newGroupName.value = "";
+        newDeviceTargetGroup.value = g.id;
     } catch (e) {
         groupError.value = e instanceof ApiError ? e.detail : "Failed";
     } finally {
@@ -288,14 +278,12 @@ async function createGroupInline(name: string) {
     }
 }
 
-// Opens the existing group dialog on top of the device dialog
 function openNewGroupFromDevice() {
     newGroupName.value = "";
     groupError.value = null;
     showNewGroup.value = true;
 }
 
-// Opens the existing credential dialog on top of the device dialog
 function openNewCredentialFromDevice() {
     credentialError.value = null;
     showNewCredential.value = true;
@@ -379,11 +367,11 @@ async function deleteGroup() {
     if (!target) return;
     deletingGroup.value = true;
     try {
+        const groupDevices = devices.value.filter((d) => d.group_id === target.id);
+        await Promise.all(groupDevices.map((d) => api.devices.delete(d.id)));
+        devices.value = devices.value.filter((d) => d.group_id !== target.id);
         await api.groups.delete(target.id);
         groups.value = groups.value.filter((g) => g.id !== target.id);
-        for (const d of devices.value) {
-            if (d.group_id === target.id) d.group_id = null;
-        }
         buildSections();
         deleteGroupTarget.value = null;
         closeEditGroup();
@@ -431,9 +419,9 @@ async function createDevice() {
 }
 
 function onDragStart(deviceId: string) { dragging.value = deviceId; }
-function onDragOver(e: DragEvent, groupId: string | null) { e.preventDefault(); dragOverGroup.value = groupId ?? "ungrouped"; }
+function onDragOver(e: DragEvent, groupId: string) { e.preventDefault(); dragOverGroup.value = groupId; }
 function onDragLeave() { dragOverGroup.value = null; }
-async function onDrop(e: DragEvent, groupId: string | null) {
+async function onDrop(e: DragEvent, groupId: string) {
     e.preventDefault();
     dragOverGroup.value = null;
     if (!dragging.value) return;
@@ -448,9 +436,9 @@ async function onDrop(e: DragEvent, groupId: string | null) {
     catch { dev.group_id = old; buildSections(); }
 }
 function onDragEnd() { dragging.value = null; dragOverGroup.value = null; }
-function sectionKey(s: GroupSection) { return s.group?.id ?? "ungrouped"; }
+function sectionKey(s: GroupSection) { return s.group.id; }
 function isDragTarget(s: GroupSection) {
-    return dragOverGroup.value === (s.group?.id ?? "ungrouped") && dragging.value !== null;
+    return dragOverGroup.value === s.group.id && dragging.value !== null;
 }
 </script>
 
@@ -503,9 +491,9 @@ function isDragTarget(s: GroupSection) {
                     class="flex flex-col gap-2"
                     @mouseenter="hoveredSection = idx"
                     @mouseleave="hoveredSection = null"
-                    @dragover="onDragOver($event, section.group?.id ?? null)"
+                    @dragover="onDragOver($event, section.group.id)"
                     @dragleave="onDragLeave"
-                    @drop="onDrop($event, section.group?.id ?? null)"
+                    @drop="onDrop($event, section.group.id)"
                 >
                     <div
                         class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50 select-none"
@@ -514,14 +502,14 @@ function isDragTarget(s: GroupSection) {
                     >
                         <button class="flex items-center gap-1.5 text-xs font-medium text-foreground min-w-0 flex-1" @click="toggleSection(idx)" @contextmenu.prevent.stop="onGroupContextMenu($event, section)">
                             <component :is="section.collapsed ? RiArrowRightSLine : RiArrowDownSLine" class="size-3.5 text-muted-foreground shrink-0" />
-                            <span class="truncate">{{ section.group?.name ?? "Ungrouped" }}</span>
+                            <span class="truncate">{{ section.group.name }}</span>
                             <span class="text-muted-foreground font-normal tabular-nums">{{ section.devices.length }}</span>
                         </button>
                         <div class="flex items-center gap-0.5 shrink-0" :style="{ opacity: hoveredSection === idx ? '1' : '0', transition: 'opacity 0.15s ease' }">
-                            <Button v-if="section.group" variant="ghost" size="icon" class="size-6" @click.stop="openEditGroup(section.group)">
+                            <Button variant="ghost" size="icon" class="size-6" @click.stop="openEditGroup(section.group)">
                                 <RiPencilLine class="size-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon" class="size-6" @click="openNewDevice(section.group?.id ?? null)">
+                            <Button variant="ghost" size="icon" class="size-6" @click="openNewDevice(section.group.id)">
                                 <RiAddLine class="size-3.5" />
                             </Button>
                         </div>
@@ -638,6 +626,8 @@ function isDragTarget(s: GroupSection) {
         :plugins="plugins"
         :credentials="credentials"
         :groups="groups"
+        :creating-group="creatingGroupInline"
+        :create-group-error="createGroupInlineError"
         @update:show="showNewDevice = $event"
         @update:name="newDeviceName = $event"
         @update:plugin="newDevicePlugin = $event"
@@ -648,7 +638,6 @@ function isDragTarget(s: GroupSection) {
         @open-new-group="openNewGroupFromDevice"
     />
 
-    <!-- Bestehendes Credential-Modal, z-index höher damit es über dem Device-Dialog liegt -->
     <NewCredentialDialog
         :show="showNewCredential"
         :saving="creatingCredential"
@@ -659,9 +648,31 @@ function isDragTarget(s: GroupSection) {
         @create="createCredential"
     />
 
-    <EditGroupDialog :group="editGroup" :name="editGroupName" :saving-name="savingGroupName" :token="groupToken" :loading-token="loadingToken" :rotating-token="rotatingToken" :token-copied="tokenCopied" :error="editGroupError" @update:name="editGroupName = $event" @save-name="saveGroupName" @rotate-token="rotateToken" @copy-token="copyToken" @close="closeEditGroup" @delete="confirmDeleteGroup = true" />
+    <EditGroupDialog
+        :group="editGroup"
+        :name="editGroupName"
+        :saving-name="savingGroupName"
+        :token="groupToken"
+        :loading-token="loadingToken"
+        :rotating-token="rotatingToken"
+        :token-copied="tokenCopied"
+        :error="editGroupError"
+        @update:name="editGroupName = $event"
+        @save-name="saveGroupName"
+        @rotate-token="rotateToken"
+        @copy-token="copyToken"
+        @close="closeEditGroup"
+        @delete="confirmDeleteGroup = true"
+    />
 
-    <DeleteGroupDialog :show="confirmDeleteGroup || !!deleteGroupTarget" :group="deleteGroupTarget ?? editGroup" :deleting="deletingGroup" @cancel="deleteGroupTarget = null; confirmDeleteGroup = false" @confirm="deleteGroup" />
+    <DeleteGroupDialog
+        :show="confirmDeleteGroup || !!deleteGroupTarget"
+        :group="deleteGroupTarget ?? editGroup"
+        :deleting="deletingGroup"
+        :device-count="devices.filter((d) => d.group_id === (deleteGroupTarget ?? editGroup)?.id).length"
+        @cancel="deleteGroupTarget = null; confirmDeleteGroup = false"
+        @confirm="deleteGroup"
+    />
 </template>
 
 <style scoped>

@@ -18,21 +18,21 @@ export interface Device {
     name: string;
     plugin_id: string;
     credential_id: string;
-    group_id: string | null;
+    group_id: string; // always required, never null
 }
 
 export interface DeviceCreate {
     name: string;
     plugin_id: string;
     credential_id: string;
-    group_id?: string | null;
+    group_id: string; // required
 }
 
 export interface DeviceUpdate {
     name?: string;
     plugin_id?: string;
     credential_id?: string;
-    group_id?: string | null;
+    group_id?: string; // optional for updates, but never set to null
 }
 
 export interface Credential {
