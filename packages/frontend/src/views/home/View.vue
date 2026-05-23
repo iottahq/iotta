@@ -9,6 +9,7 @@ import NewGroupDialog from "./group/NewDialog.vue";
 import EditGroupDialog from "./group/EditDialog.vue";
 import DeleteGroupDialog from "./group/DeleteDialog.vue";
 import NewDeviceDialog from "./device/NewDialog.vue";
+import NewCredentialDialog from "@/views/credentials/NewDialog.vue";
 import ContextMenu from "./ContextMenu.vue";
 import type { ContextMenuItem } from "./ContextMenu.vue";
 import {
@@ -53,28 +54,20 @@ const devices = ref<DeviceWithStatus[]>([]);
 const groups = ref<Group[]>([]);
 const sections = ref<GroupSection[]>([]);
 
-// Drag & drop
 const dragging = ref<string | null>(null);
 const dragOverGroup = ref<string | null>(null);
-
-// Hover
 const hoveredSection = ref<number | null>(null);
-
-// Context menu
 const contextMenu = ref<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
 
-// Delete device confirm
 const deleteDeviceTarget = ref<DeviceWithStatus | null>(null);
 const deletingDevice = ref(false);
 const deleteDeviceError = ref<string | null>(null);
 
-// New group dialog (standalone)
 const showNewGroup = ref(false);
 const newGroupName = ref("");
 const savingGroup = ref(false);
 const groupError = ref<string | null>(null);
 
-// New device dialog
 const showNewDevice = ref(false);
 const newDeviceTargetGroup = ref<string | null>(null);
 const newDeviceName = ref("");
@@ -83,14 +76,18 @@ const newDeviceCredential = ref("");
 const savingDevice = ref(false);
 const deviceError = ref<string | null>(null);
 
-// Inline group creation inside device dialog
 const creatingGroupInline = ref(false);
 const createGroupInlineError = ref<string | null>(null);
 
 const plugins = ref<{ id: string; name: string }[]>([]);
 const credentials = ref<{ id: string; name: string }[]>([]);
 
-// Edit group dialog
+// Credential dialog – reuse the existing one from credentials view
+const showNewCredential = ref(false);
+const credentialTemplates = ref<{ id: string; name: string; fields: { field: string; type: string; label: string }[] }[]>([]);
+const creatingCredential = ref(false);
+const credentialError = ref<string | null>(null);
+
 const editGroup = ref<Group | null>(null);
 const editGroupName = ref("");
 const savingGroupName = ref(false);
@@ -176,10 +173,21 @@ onMounted(async () => {
         ]);
         plugins.value = p.items.map((x) => ({ id: x.id, name: x.name }));
         credentials.value = c.map((x) => ({ id: x.id, name: x.name }));
+
+        // Build credential templates from plugin definitions
+        const templateList: typeof credentialTemplates.value = [];
+        for (const plugin of p.items) {
+            const detail = await api.plugins.devices.get(plugin.id).catch(() => null);
+            if (!detail) continue;
+            const credFields = (detail as any)._credentials;
+            if (Array.isArray(credFields) && credFields.length > 0) {
+                templateList.push({ id: plugin.id, name: plugin.name, fields: credFields });
+            }
+        }
+        credentialTemplates.value = templateList;
     } catch {}
 });
 
-// React to sidebar + button triggering new device dialog
 watch(newDeviceOpen, (val) => {
     if (val) {
         openNewDevice(newDeviceComposableGroupId.value);
@@ -206,19 +214,15 @@ function toggleSection(idx: number) {
     sections.value[idx].collapsed = !sections.value[idx].collapsed;
 }
 
-// Context menus
 function onGroupContextMenu(e: MouseEvent, section: GroupSection) {
     if (!section.group) return;
     const group = section.group;
     contextMenu.value = {
-        x: e.clientX,
-        y: e.clientY,
+        x: e.clientX, y: e.clientY,
         items: [
             { label: "Edit", icon: RiPencilLine, action: () => openEditGroup(group) },
             { label: "", separator: true, action: () => {} },
-            { label: "Delete", icon: RiDeleteBinLine, variant: "destructive", action: () => {
-                deleteGroupTarget.value = group;
-            }},
+            { label: "Delete", icon: RiDeleteBinLine, variant: "destructive", action: () => { deleteGroupTarget.value = group; } },
         ],
     };
 }
@@ -227,19 +231,15 @@ function onDeviceContextMenu(e: MouseEvent, device: DeviceWithStatus) {
     e.preventDefault();
     e.stopPropagation();
     contextMenu.value = {
-        x: e.clientX,
-        y: e.clientY,
+        x: e.clientX, y: e.clientY,
         items: [
             { label: "Open", icon: RiExternalLinkLine, action: () => router.push(`/devices/${device.id}`) },
             { label: "", separator: true, action: () => {} },
-            { label: "Delete", icon: RiDeleteBinLine, variant: "destructive", action: () => {
-                deleteDeviceTarget.value = device;
-            }},
+            { label: "Delete", icon: RiDeleteBinLine, variant: "destructive", action: () => { deleteDeviceTarget.value = device; } },
         ],
     };
 }
 
-// Delete device
 async function confirmDeleteDevice() {
     if (!deleteDeviceTarget.value) return;
     deletingDevice.value = true;
@@ -256,7 +256,6 @@ async function confirmDeleteDevice() {
     }
 }
 
-// Group CRUD
 async function createGroup() {
     if (!newGroupName.value.trim()) return;
     savingGroup.value = true;
@@ -286,6 +285,34 @@ async function createGroupInline(name: string) {
         createGroupInlineError.value = e instanceof ApiError ? e.detail : "Failed";
     } finally {
         creatingGroupInline.value = false;
+    }
+}
+
+// Opens the existing group dialog on top of the device dialog
+function openNewGroupFromDevice() {
+    newGroupName.value = "";
+    groupError.value = null;
+    showNewGroup.value = true;
+}
+
+// Opens the existing credential dialog on top of the device dialog
+function openNewCredentialFromDevice() {
+    credentialError.value = null;
+    showNewCredential.value = true;
+}
+
+async function createCredential(name: string, data: Record<string, string>) {
+    creatingCredential.value = true;
+    credentialError.value = null;
+    try {
+        const cred = await api.credentials.create({ name, data });
+        credentials.value.push({ id: cred.id, name: cred.name });
+        newDeviceCredential.value = cred.id;
+        showNewCredential.value = false;
+    } catch (e) {
+        credentialError.value = e instanceof ApiError ? e.detail : "Failed to create credential";
+    } finally {
+        creatingCredential.value = false;
     }
 }
 
@@ -429,7 +456,6 @@ function isDragTarget(s: GroupSection) {
 
 <template>
     <div class="flex flex-col h-full">
-        <!-- Header -->
         <div class="flex items-center justify-between gap-4 px-6 py-4 border-b border-border">
             <div>
                 <h1 class="text-sm font-semibold">Devices</h1>
@@ -445,7 +471,6 @@ function isDragTarget(s: GroupSection) {
             </div>
         </div>
 
-        <!-- Toolbar -->
         <div class="relative flex items-center px-6 py-3 border-b border-border">
             <div class="flex-1" />
             <div class="relative w-64">
@@ -460,7 +485,6 @@ function isDragTarget(s: GroupSection) {
             </div>
         </div>
 
-        <!-- Content -->
         <div class="flex-1 overflow-auto px-6 py-4 flex flex-col gap-4">
             <div v-if="loading" class="flex items-center justify-center py-16 text-muted-foreground">
                 <RiLoader4Line class="size-5 animate-spin mr-2" />
@@ -483,7 +507,6 @@ function isDragTarget(s: GroupSection) {
                     @dragleave="onDragLeave"
                     @drop="onDrop($event, section.group?.id ?? null)"
                 >
-                    <!-- Group header -->
                     <div
                         class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50 select-none"
                         :class="isDragTarget(section) ? 'bg-primary/10 ring-1 ring-primary/30' : ''"
@@ -504,7 +527,6 @@ function isDragTarget(s: GroupSection) {
                         </div>
                     </div>
 
-                    <!-- Devices -->
                     <div
                         v-if="!section.collapsed"
                         :class="[viewMode === 'grid' ? 'grid gap-2' : 'flex flex-col gap-1.5']"
@@ -527,7 +549,6 @@ function isDragTarget(s: GroupSection) {
                             @contextmenu="onDeviceContextMenu($event, device)"
                             :class="['group flex cursor-pointer rounded-lg border border-border bg-card transition-all hover:border-primary/40 hover:shadow-sm', dragging === device.id ? 'opacity-40 scale-95' : '', viewMode === 'grid' ? 'flex-col overflow-hidden' : 'flex-row items-center gap-3 px-3 py-2']"
                         >
-                            <!-- Grid -->
                             <div v-if="viewMode === 'grid'" class="flex items-center justify-center h-28 bg-muted/30 border-b border-border relative">
                                 <component :is="getPluginIcon(device.plugin_id)" class="size-10 text-muted-foreground/40" />
                                 <div class="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground cursor-grab">
@@ -540,7 +561,6 @@ function isDragTarget(s: GroupSection) {
                                 <span class="text-[10px] text-muted-foreground font-mono truncate">{{ device.plugin_id }}</span>
                             </div>
 
-                            <!-- List -->
                             <component v-if="viewMode === 'list'" :is="getPluginIcon(device.plugin_id)" class="size-4 text-muted-foreground shrink-0" />
                             <div v-if="viewMode === 'list'" class="flex-1 min-w-0 flex items-center gap-2">
                                 <span class="text-xs font-medium text-foreground truncate">{{ device.name }}</span>
@@ -556,7 +576,6 @@ function isDragTarget(s: GroupSection) {
                     </div>
                 </div>
 
-                <!-- Empty -->
                 <div v-if="sections.length === 0" class="flex flex-col items-center justify-center py-20 text-center gap-3">
                     <RiPlugLine class="size-10 text-muted-foreground/30" />
                     <div>
@@ -569,7 +588,6 @@ function isDragTarget(s: GroupSection) {
                     </Button>
                 </div>
 
-                <!-- No search results -->
                 <div v-else-if="filteredSections.length === 0" class="flex flex-col items-center justify-center py-20 text-center gap-2">
                     <RiSearchLine class="size-8 text-muted-foreground/30" />
                     <p class="text-xs text-muted-foreground">No results for <span class="font-medium text-foreground">"{{ search }}"</span></p>
@@ -578,16 +596,8 @@ function isDragTarget(s: GroupSection) {
         </div>
     </div>
 
-    <!-- Context menu -->
-    <ContextMenu
-        v-if="contextMenu"
-        :x="contextMenu.x"
-        :y="contextMenu.y"
-        :items="contextMenu.items"
-        @close="contextMenu = null"
-    />
+    <ContextMenu v-if="contextMenu" :x="contextMenu.x" :y="contextMenu.y" :items="contextMenu.items" @close="contextMenu = null" />
 
-    <!-- Delete device confirm -->
     <Teleport to="body">
         <Transition name="fade">
             <div v-if="deleteDeviceTarget" class="fixed inset-0 z-[60] flex items-center justify-center">
@@ -617,12 +627,41 @@ function isDragTarget(s: GroupSection) {
 
     <NewGroupDialog :show="showNewGroup" :name="newGroupName" :saving="savingGroup" :error="groupError" @update:show="showNewGroup = $event" @update:name="newGroupName = $event" @create="createGroup" />
 
-    <NewDeviceDialog :show="showNewDevice" :target-group-id="newDeviceTargetGroup" :name="newDeviceName" :plugin="newDevicePlugin" :credential="newDeviceCredential" :saving="savingDevice" :error="deviceError" :plugins="plugins" :credentials="credentials" :groups="groups" :creating-group="creatingGroupInline" :create-group-error="createGroupInlineError" @update:show="showNewDevice = $event" @update:name="newDeviceName = $event" @update:plugin="newDevicePlugin = $event" @update:credential="newDeviceCredential = $event" @update:target-group-id="newDeviceTargetGroup = $event" @create="createDevice" @create-group="createGroupInline" />
+    <NewDeviceDialog
+        :show="showNewDevice"
+        :target-group-id="newDeviceTargetGroup"
+        :name="newDeviceName"
+        :plugin="newDevicePlugin"
+        :credential="newDeviceCredential"
+        :saving="savingDevice"
+        :error="deviceError"
+        :plugins="plugins"
+        :credentials="credentials"
+        :groups="groups"
+        @update:show="showNewDevice = $event"
+        @update:name="newDeviceName = $event"
+        @update:plugin="newDevicePlugin = $event"
+        @update:credential="newDeviceCredential = $event"
+        @update:target-group-id="newDeviceTargetGroup = $event"
+        @create="createDevice"
+        @open-new-credential="openNewCredentialFromDevice"
+        @open-new-group="openNewGroupFromDevice"
+    />
+
+    <!-- Bestehendes Credential-Modal, z-index höher damit es über dem Device-Dialog liegt -->
+    <NewCredentialDialog
+        :show="showNewCredential"
+        :saving="creatingCredential"
+        :error="credentialError"
+        :templates="credentialTemplates"
+        style="z-index: 60"
+        @update:show="showNewCredential = $event"
+        @create="createCredential"
+    />
 
     <EditGroupDialog :group="editGroup" :name="editGroupName" :saving-name="savingGroupName" :token="groupToken" :loading-token="loadingToken" :rotating-token="rotatingToken" :token-copied="tokenCopied" :error="editGroupError" @update:name="editGroupName = $event" @save-name="saveGroupName" @rotate-token="rotateToken" @copy-token="copyToken" @close="closeEditGroup" @delete="confirmDeleteGroup = true" />
 
     <DeleteGroupDialog :show="confirmDeleteGroup || !!deleteGroupTarget" :group="deleteGroupTarget ?? editGroup" :deleting="deletingGroup" @cancel="deleteGroupTarget = null; confirmDeleteGroup = false" @confirm="deleteGroup" />
-
 </template>
 
 <style scoped>

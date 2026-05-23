@@ -97,7 +97,7 @@ function close() {
 <template>
     <Teleport to="body">
         <Transition name="fade">
-            <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center" @click.self="close">
+            <div v-if="show" class="fixed inset-0 z-[60] flex items-center justify-center" @click.self="close">
                 <div class="absolute inset-0 bg-black/50" @click="close" />
                 <div class="relative z-10 w-full max-w-sm rounded-xl border border-border bg-card shadow-xl px-6 py-5 mx-4 max-h-[90vh] flex flex-col">
 
@@ -120,7 +120,7 @@ function close() {
                     <template v-if="step === 'templates'">
                         <div class="flex flex-col gap-2 overflow-y-auto min-h-0">
                             <p class="text-xs text-muted-foreground mb-1">
-                                Select a device plugin to pre-fill the credential fields. You can edit them afterwards.
+                                Select a device plugin to pre-fill the credential fields.
                             </p>
                             <button
                                 v-for="t in templates"
@@ -171,18 +171,11 @@ function close() {
                                     </div>
                                 </div>
 
-                                <div
-                                    v-if="fields.length === 0"
-                                    class="flex items-center justify-center rounded-md border border-dashed border-border py-5 text-[11px] text-muted-foreground"
-                                >
+                                <div v-if="fields.length === 0" class="flex items-center justify-center rounded-md border border-dashed border-border py-5 text-[11px] text-muted-foreground">
                                     No fields yet — use a template or add manually
                                 </div>
 
-                                <div
-                                    v-for="(field, idx) in fields"
-                                    :key="idx"
-                                    class="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5"
-                                >
+                                <div v-for="(field, idx) in fields" :key="idx" class="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
                                     <div class="flex items-center gap-1.5">
                                         <Input v-model="field.key" placeholder="key" class="font-mono text-[11px] h-6 flex-1" />
                                         <button
