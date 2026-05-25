@@ -9,6 +9,7 @@ import NewGroupDialog from "./group/NewDialog.vue";
 import EditGroupDialog from "./group/EditDialog.vue";
 import DeleteGroupDialog from "./group/DeleteDialog.vue";
 import NewDeviceDialog from "./device/NewDialog.vue";
+import EditDeviceDialog from "./device/EditDialog.vue";
 import NewCredentialDialog from "@/views/credentials/NewDialog.vue";
 import ContextMenu from "./ContextMenu.vue";
 import type { ContextMenuItem } from "./ContextMenu.vue";
@@ -69,6 +70,8 @@ const savingGroup = ref(false);
 const groupError = ref<string | null>(null);
 
 const showNewDevice = ref(false);
+const showEditDevice = ref(false);
+const editDeviceTarget = ref<DeviceWithStatus | null>(null);
 const newDeviceTargetGroup = ref<string | null>(null);
 const newDeviceName = ref("");
 const newDevicePlugin = ref("");
@@ -223,7 +226,8 @@ function onDeviceContextMenu(e: MouseEvent, device: DeviceWithStatus) {
         x: e.clientX, y: e.clientY,
         items: [
             { label: "Open", icon: RiExternalLinkLine, action: () => router.push(`/devices/${device.id}`) },
-            { label: "", separator: true, action: () => {} },
+            { label: "Edit", icon: RiPencilLine, action: () => openEditDevice(device) },
+            { label: "", separator: true, action: () => { } },
             { label: "Delete", icon: RiDeleteBinLine, variant: "destructive", action: () => { deleteDeviceTarget.value = device; } },
         ],
     };
@@ -320,6 +324,17 @@ async function openEditGroup(group: Group) {
     }
 }
 
+function openEditDevice(device: DeviceWithStatus) {
+    editDeviceTarget.value = device;
+    newDeviceTargetGroup.value = device.group_id;
+    newDeviceName.value = device.name;
+    newDevicePlugin.value = device.plugin_id;
+    newDeviceCredential.value = device.credential_id ?? credentials.value[0]?.id ?? "";
+    deviceError.value = null;
+    createGroupInlineError.value = null;
+    showEditDevice.value = true;
+}
+
 function closeEditGroup() {
     editGroup.value = null;
     confirmDeleteGroup.value = false;
@@ -411,6 +426,29 @@ async function createDevice() {
             const dev = devices.value.find((x) => x.id === d.id);
             if (dev) { dev.online = result.online; buildSections(); }
         } catch {}
+    } catch (e) {
+        deviceError.value = e instanceof ApiError ? e.detail : "Failed";
+    } finally {
+        savingDevice.value = false;
+    }
+}
+
+async function updateDevice() {
+    if (!editDeviceTarget.value || !newDeviceName.value.trim() || !newDevicePlugin.value || !newDeviceCredential.value || !newDeviceTargetGroup.value) return;
+    savingDevice.value = true;
+    deviceError.value = null;
+    try {
+        const updated = await api.devices.update(editDeviceTarget.value.id, {
+            name: newDeviceName.value.trim(),
+            plugin_id: newDevicePlugin.value,
+            credential_id: newDeviceCredential.value,
+            group_id: newDeviceTargetGroup.value,
+        });
+        const dev = devices.value.find((d) => d.id === updated.id);
+        if (dev) Object.assign(dev, updated);
+        buildSections();
+        showEditDevice.value = false;
+        editDeviceTarget.value = null;
     } catch (e) {
         deviceError.value = e instanceof ApiError ? e.detail : "Failed";
     } finally {
@@ -634,6 +672,29 @@ function isDragTarget(s: GroupSection) {
         @update:credential="newDeviceCredential = $event"
         @update:target-group-id="newDeviceTargetGroup = $event"
         @create="createDevice"
+        @open-new-credential="openNewCredentialFromDevice"
+        @open-new-group="openNewGroupFromDevice"
+    />
+
+    <EditDeviceDialog
+        :show="showEditDevice"
+        :target-group-id="newDeviceTargetGroup"
+        :name="newDeviceName"
+        :plugin="newDevicePlugin"
+        :credential="newDeviceCredential"
+        :saving="savingDevice"
+        :error="deviceError"
+        :plugins="plugins"
+        :credentials="credentials"
+        :groups="groups"
+        :creating-group="creatingGroupInline"
+        :create-group-error="createGroupInlineError"
+        @update:show="showEditDevice = $event"
+        @update:name="newDeviceName = $event"
+        @update:plugin="newDevicePlugin = $event"
+        @update:credential="newDeviceCredential = $event"
+        @update:target-group-id="newDeviceTargetGroup = $event"
+        @save="updateDevice"
         @open-new-credential="openNewCredentialFromDevice"
         @open-new-group="openNewGroupFromDevice"
     />
