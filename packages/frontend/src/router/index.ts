@@ -30,7 +30,7 @@ const router = createRouter({
     {
       path: "/plugins",
       name: "plugins",
-      component: () => import("@/views/PluginsView.vue"),
+      component: () => import("@/views/plugins/View.vue"),
     },
     {
       path: "/insights",
