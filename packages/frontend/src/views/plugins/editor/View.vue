@@ -9,6 +9,7 @@ import {
     RiCheckLine,
 } from "@remixicon/vue";
 import BaseInfoView from "./baseInfo/View.vue";
+import CredentialsView, { type CredentialField } from "./credentials/View.vue";
 import TabPlaceholder from "./TabPlaceholder.vue";
 
 // Props / Emits
@@ -23,7 +24,7 @@ const emit = defineEmits<{
     saved: [pluginId: string];
 }>();
 
-// Tabs 
+// Tabs
 
 type TabId = "base" | "credentials" | "protocols" | "actions" | "status" | "preview";
 
@@ -56,12 +57,8 @@ const availableProtocols = ref<{ id: string; name: string }[]>([]);
 const selectedProtocols  = ref<string[]>([]);
 const loadingProtocols   = ref(false);
 
-// State: other tabs
-// TODO: #27 credentials – managed inside credentials/View.vue
-// TODO: #28 protocols   – managed inside protocols/View.vue
-// TODO: #29 actions     – managed inside actions/View.vue
-// TODO: #30 status      – managed inside status/View.vue
-// TODO: #31 preview     – managed inside preview/View.vue
+// State: Credentials
+const credentialFields = ref<CredentialField[]>([]);
 
 // Global
 
@@ -114,6 +111,7 @@ function reset() {
     tags.value              = [];
     minIotta.value          = "0.1.0";
     selectedProtocols.value = [];
+    credentialFields.value  = [];
     saveError.value         = null;
     yamlOpen.value          = false;
 }
@@ -132,6 +130,20 @@ function prefill(plugin: any) {
     tags.value        = Array.isArray(plugin.tags) ? [...plugin.tags] : [];
     const deps        = plugin.dependencies?.protocols ?? [];
     selectedProtocols.value = Array.isArray(deps) ? [...deps] : [];
+
+    // credentials.json – stored as _credentials in plugin manifest
+    if (Array.isArray(plugin._credentials)) {
+        credentialFields.value = plugin._credentials.map((f: any) => ({
+            field:       f.field       ?? "",
+            type:        f.type        ?? "string",
+            label:       f.label       ?? "",
+            placeholder: f.placeholder ?? "",
+            required:    f.required    ?? true,
+            secret:      f.secret      ?? false,
+        }));
+    } else {
+        credentialFields.value = [];
+    }
 }
 
 // Build payload
@@ -156,6 +168,13 @@ function buildPluginYaml(): Record<string, unknown> {
     return yaml;
 }
 
+function buildCredentialsJson(): any[] | null {
+    if (!credentialFields.value.length) return null;
+    return credentialFields.value.map(({ placeholder, ...f }) =>
+        placeholder ? { ...f, placeholder } : f
+    );
+}
+
 // Validation + Save
 
 function validate(): string | null {
@@ -164,6 +183,15 @@ function validate(): string | null {
     if (!/^[a-z0-9][a-z0-9\-]*$/.test(id.value))
         return "Plugin ID must be lowercase alphanumeric with hyphens only.";
     if (!version.value.trim()) return "Version is required.";
+
+    // Validate credential fields
+    for (const [i, f] of credentialFields.value.entries()) {
+        if (!f.field.trim()) return `Credential field #${i + 1}: field key is required.`;
+        if (!f.label.trim()) return `Credential field #${i + 1}: label is required.`;
+        if (!/^[a-z0-9_]+$/.test(f.field))
+            return `Credential field #${i + 1}: key "${f.field}" must be lowercase letters, numbers and underscores only.`;
+    }
+
     return null;
 }
 
@@ -188,7 +216,7 @@ async function save() {
                 },
                 body: JSON.stringify({
                     plugin_yaml:      buildPluginYaml(),
-                    credentials_json: null, // TODO: #27
+                    credentials_json: buildCredentialsJson(),
                     protocols_json:   null, // TODO: #28
                     actions_json:     null, // TODO: #29
                 }),
@@ -258,11 +286,16 @@ const canSave = computed(() =>
                             @click="activeTab = tab.id"
                         >
                             {{ tab.label }}
+                            <!-- dot indicator if tab has data -->
+                            <span
+                                v-if="tab.id === 'credentials' && credentialFields.length"
+                                class="ml-1.5 inline-flex size-1.5 rounded-full bg-primary"
+                            />
                         </button>
                     </div>
 
                     <!-- Body -->
-                    <div class="flex relative">
+                    <div class="flex relative" style="max-height: 60vh; overflow-y: auto;">
 
                         <!-- Loading overlay -->
                         <div
@@ -309,17 +342,23 @@ const canSave = computed(() =>
                             @update:yaml-open="yamlOpen = $event"
                         />
 
-                        <TabPlaceholder v-else-if="activeTab === 'credentials'" label="Credentials"       :issue="27" />
-                        <TabPlaceholder v-else-if="activeTab === 'protocols'"   label="Protocol blocks"   :issue="28" />
-                        <TabPlaceholder v-else-if="activeTab === 'actions'"     label="Actions"           :issue="29" />
+                        <!-- Tab: Credentials -->
+                        <CredentialsView
+                            v-else-if="activeTab === 'credentials'"
+                            :fields="credentialFields"
+                            @update:fields="credentialFields = $event"
+                        />
+
+                        <TabPlaceholder v-else-if="activeTab === 'protocols'"   label="Protocol blocks"    :issue="28" />
+                        <TabPlaceholder v-else-if="activeTab === 'actions'"     label="Actions"            :issue="29" />
                         <TabPlaceholder v-else-if="activeTab === 'status'"      label="Status / Subscribe" :issue="30" />
-                        <TabPlaceholder v-else-if="activeTab === 'preview'"     label="Preview image"     :issue="31" />
+                        <TabPlaceholder v-else-if="activeTab === 'preview'"     label="Preview image"      :issue="31" />
 
                     </div><!-- end body -->
 
                     <!-- Footer -->
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-border shrink-0">
-                        <div v-if="saveError" class="flex items-center gap-1.5 text-xs text-destructive">
+                        <div v-if="saveError" class="flex items-center gap-1.5 text-xs text-destructive mr-auto">
                             <RiErrorWarningLine class="size-3.5 shrink-0" />
                             {{ saveError }}
                         </div>

@@ -2,7 +2,9 @@
 import { ref, computed, watch } from "vue";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { RiCloseLine, RiLoader4Line, RiCheckLine, RiCodeLine } from "@remixicon/vue";
+import FilePreviewPanel from "@/components/ui/file-preview/FilePreviewPanel.vue";
+import FilePreviewToggle from "@/components/ui/file-preview/FilePreviewToggle.vue";
+import { RiCloseLine, RiLoader4Line, RiCheckLine } from "@remixicon/vue";
 
 const props = defineProps<{
     name: string;
@@ -140,7 +142,6 @@ function toYamlString(obj: unknown, indent = 0): string {
                 </div>
             </div>
 
-            <!-- Version + Status + Min iotta -->
             <div class="grid grid-cols-3 gap-3">
                 <div class="flex flex-col gap-1.5">
                     <label class="text-xs font-medium">Version <span class="text-destructive">*</span></label>
@@ -164,7 +165,6 @@ function toYamlString(obj: unknown, indent = 0): string {
                 </div>
             </div>
 
-            <!-- Description -->
             <div class="flex flex-col gap-1.5">
                 <label class="text-xs font-medium">Description</label>
                 <textarea :value="description" rows="3"
@@ -173,7 +173,6 @@ function toYamlString(obj: unknown, indent = 0): string {
                     @input="emit('update:description', ($event.target as HTMLTextAreaElement).value)" />
             </div>
 
-            <!-- Author -->
             <div class="flex flex-col gap-1.5">
                 <label class="text-xs font-medium">Author</label>
                 <div class="grid grid-cols-3 gap-2">
@@ -186,7 +185,6 @@ function toYamlString(obj: unknown, indent = 0): string {
                 </div>
             </div>
 
-            <!-- Tags -->
             <div class="flex flex-col gap-1.5">
                 <label class="text-xs font-medium">Tags</label>
                 <div class="flex flex-wrap gap-1.5 min-h-[28px] rounded-md border border-border bg-input/20 dark:bg-input/30 px-2 py-1.5 focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/30 transition-colors">
@@ -205,7 +203,6 @@ function toYamlString(obj: unknown, indent = 0): string {
                 <p class="text-[10px] text-muted-foreground">Press Enter or comma to add a tag.</p>
             </div>
 
-            <!-- Protocol dependencies -->
             <div class="flex flex-col gap-1.5">
                 <label class="text-xs font-medium">Protocol dependencies</label>
                 <div v-if="loadingProtocols" class="flex items-center gap-2 text-xs text-muted-foreground py-2">
@@ -227,39 +224,22 @@ function toYamlString(obj: unknown, indent = 0): string {
                 </div>
             </div>
 
-            <!-- View YAML toggle -->
             <div class="pt-1">
-                <Button variant="ghost" size="sm" class="gap-1.5 -ml-2"
-                    :class="showYaml ? 'text-primary' : 'text-muted-foreground'"
-                    @click="showYaml = !showYaml">
-                    <RiCodeLine class="size-3.5" />
-                    {{ showYaml ? "Hide YAML" : "View YAML" }}
-                </Button>
+                <FilePreviewToggle
+                    :show="showYaml"
+                    filename="plugin.yaml"
+                    @update:show="showYaml = $event"
+                />
             </div>
 
         </div>
 
-        <Transition name="slide-right">
-            <div v-if="showYaml"
-                class="flex-1 min-w-0 self-stretch border-l border-border bg-muted/20 flex flex-col overflow-hidden">
-                <div class="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
-                    <span class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">plugin.yaml</span>
-                    <button class="text-muted-foreground hover:text-foreground transition-colors" @click="showYaml = false">
-                        <RiCloseLine class="size-3.5" />
-                    </button>
-                </div>
-                <pre class="flex-1 overflow-y-auto overflow-x-auto px-4 py-3 font-mono text-[10px] text-foreground whitespace-pre leading-relaxed">{{ yamlPreview }}</pre>
-            </div>
-        </Transition>
+        <FilePreviewPanel
+            :show="showYaml"
+            filename="plugin.yaml"
+            :content="yamlPreview"
+            @update:show="showYaml = $event"
+        />
 
     </div>
 </template>
-
-<style scoped>
-.slide-right-enter-active,
-.slide-right-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
-.slide-right-enter-from,
-.slide-right-leave-to { opacity: 0; transform: translateX(8px); }
-.slide-right-enter-to,
-.slide-right-leave-from { opacity: 1; transform: translateX(0); }
-</style>

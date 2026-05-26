@@ -8,7 +8,7 @@ A device must always belong to a group.
 import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException   
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from src.auth import require_auth
