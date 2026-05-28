@@ -10,6 +10,7 @@ import {
 } from "@remixicon/vue";
 import BaseInfoView from "./baseInfo/View.vue";
 import CredentialsView, { type CredentialField } from "./credentials/View.vue";
+import ProtocolsView, { type ProtocolConfig } from "./protocols/View.vue";
 import TabPlaceholder from "./TabPlaceholder.vue";
 
 // Props / Emits
@@ -59,6 +60,8 @@ const loadingProtocols   = ref(false);
 
 // State: Credentials
 const credentialFields = ref<CredentialField[]>([]);
+
+const protocolBlocks = ref<ProtocolConfig[]>([]);
 
 // Global
 
@@ -111,7 +114,8 @@ function reset() {
     tags.value              = [];
     minIotta.value          = "0.1.0";
     selectedProtocols.value = [];
-    credentialFields.value  = [];
+    credentialFields.value = [];
+    protocolBlocks.value = [];
     saveError.value         = null;
     yamlOpen.value          = false;
 }
@@ -144,6 +148,15 @@ function prefill(plugin: any) {
     } else {
         credentialFields.value = [];
     }
+
+    // protocols.json – stored as _protocols
+    if (plugin._protocols && typeof plugin._protocols === "object") {
+        protocolBlocks.value = Object.entries(plugin._protocols).map(
+            ([protocolId, config]) => ({ protocolId, config: config as Record<string, unknown> })
+        );
+    } else {
+        protocolBlocks.value = [];
+    }
 }
 
 // Build payload
@@ -173,6 +186,13 @@ function buildCredentialsJson(): any[] | null {
     return credentialFields.value.map(({ placeholder, ...f }) =>
         placeholder ? { ...f, placeholder } : f
     );
+}
+
+function buildProtocolsJson(): Record<string, unknown> | null {
+    if (!protocolBlocks.value.length) return null;
+    const obj: Record<string, unknown> = {};
+    for (const b of protocolBlocks.value) obj[b.protocolId] = b.config;
+    return obj;
 }
 
 // Validation + Save
@@ -291,6 +311,12 @@ const canSave = computed(() =>
                                 v-if="tab.id === 'credentials' && credentialFields.length"
                                 class="ml-1.5 inline-flex size-1.5 rounded-full bg-primary"
                             />
+
+                            <span
+                                v-if="tab.id === 'protocols' && protocolBlocks.length"
+                                class="ml-1.5 inline-flex size-1.5 rounded-full bg-primary"
+                            />
+                            
                         </button>
                     </div>
 
@@ -349,7 +375,13 @@ const canSave = computed(() =>
                             @update:fields="credentialFields = $event"
                         />
 
-                        <TabPlaceholder v-else-if="activeTab === 'protocols'"   label="Protocol blocks"    :issue="28" />
+                        <ProtocolsView
+                            v-else-if="activeTab === 'protocols'"
+                            :blocks="protocolBlocks"
+                            :available-protocols="availableProtocols"
+                            @update:blocks="protocolBlocks = $event"
+                        />
+                    
                         <TabPlaceholder v-else-if="activeTab === 'actions'"     label="Actions"            :issue="29" />
                         <TabPlaceholder v-else-if="activeTab === 'status'"      label="Status / Subscribe" :issue="30" />
                         <TabPlaceholder v-else-if="activeTab === 'preview'"     label="Preview image"      :issue="31" />
