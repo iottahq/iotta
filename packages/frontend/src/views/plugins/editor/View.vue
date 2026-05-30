@@ -13,6 +13,7 @@ import CredentialsView, { type CredentialField } from "./credentials/View.vue";
 import ProtocolsView, { type ProtocolConfig } from "./protocols/View.vue";
 import ActionsView, { type ActionDef } from "./actions/View.vue";
 import TabPlaceholder from "./TabPlaceholder.vue";
+import PreviewView, { type IconAsset } from "./preview/View.vue";
 
 // ── Props / Emits ─────────────────────────────────────────────────────────────
 
@@ -70,6 +71,10 @@ const protocolBlocks = ref<ProtocolConfig[]>([]);
 // ── State: Actions ────────────────────────────────────────────────────────────
 
 const actionDefs = ref<ActionDef[]>([]);
+
+// ── State: Icon ───────────────────────────────────────────────────────────────
+
+const iconAsset = ref<IconAsset | null>(null);
 
 // ── Global ────────────────────────────────────────────────────────────────────
 
@@ -130,6 +135,7 @@ function reset() {
     credentialFields.value  = [];
     protocolBlocks.value    = [];
     actionDefs.value        = [];
+    iconAsset.value         = null;
     saveError.value         = null;
     yamlOpen.value          = false;
 }
@@ -356,6 +362,13 @@ async function save() {
                     credentials_json: buildCredentialsJson(),
                     protocols_json:   buildProtocolsJson(),
                     actions_json:     buildActionsJson(),
+                    icon: iconAsset.value
+                        ? {
+                            filename:  iconAsset.value.filename,
+                            base64:    iconAsset.value.base64,
+                            mime_type: iconAsset.value.mimeType,
+                        }
+                        : null,
                 }),
             },
         );
@@ -435,6 +448,10 @@ const canSave = computed(() =>
                                 v-if="tab.id === 'actions' && actionDefs.length"
                                 class="ml-1.5 inline-flex size-1.5 rounded-full bg-primary"
                             />
+                            <span
+                                v-if="tab.id === 'preview' && iconAsset"
+                                class="ml-1.5 inline-flex size-1.5 rounded-full bg-primary"
+                            />
                         </button>
                     </div>
 
@@ -512,8 +529,13 @@ const canSave = computed(() =>
                         <!-- Tab: Status / Subscribe (coming soon) -->
                         <TabPlaceholder v-else-if="activeTab === 'status'"  label="Status / Subscribe" :issue="30" />
 
-                        <!-- Tab: Preview (coming soon) -->
-                        <TabPlaceholder v-else-if="activeTab === 'preview'" label="Preview image"      :issue="31" />
+                        <!-- Tab: Preview / Icon -->
+                        <PreviewView
+                            v-else-if="activeTab === 'preview'"
+                            :icon="iconAsset"
+                            :plugin-id="editPluginId"
+                            @update:icon="iconAsset = $event"
+                        />
 
                     </div>
 
