@@ -11,9 +11,10 @@ import {
 import BaseInfoView from "./baseInfo/View.vue";
 import CredentialsView, { type CredentialField } from "./credentials/View.vue";
 import ProtocolsView, { type ProtocolConfig } from "./protocols/View.vue";
+import ActionsView, { type ActionDef } from "./actions/View.vue";
 import TabPlaceholder from "./TabPlaceholder.vue";
 
-// Props / Emits
+// ── Props / Emits ─────────────────────────────────────────────────────────────
 
 const props = defineProps<{
     show: boolean;
@@ -25,7 +26,7 @@ const emit = defineEmits<{
     saved: [pluginId: string];
 }>();
 
-// Tabs
+// ── Tabs ──────────────────────────────────────────────────────────────────────
 
 type TabId = "base" | "credentials" | "protocols" | "actions" | "status" | "preview";
 
@@ -40,7 +41,7 @@ const TABS: { id: TabId; label: string }[] = [
 
 const activeTab = ref<TabId>("base");
 
-// State: Base Info
+// ── State: Base Info ──────────────────────────────────────────────────────────
 
 const name               = ref("");
 const id                 = ref("");
@@ -58,19 +59,31 @@ const availableProtocols = ref<{ id: string; name: string }[]>([]);
 const selectedProtocols  = ref<string[]>([]);
 const loadingProtocols   = ref(false);
 
-// State: Credentials
+// ── State: Credentials ────────────────────────────────────────────────────────
+
 const credentialFields = ref<CredentialField[]>([]);
+
+// ── State: Protocols ──────────────────────────────────────────────────────────
 
 const protocolBlocks = ref<ProtocolConfig[]>([]);
 
-// Global
+// ── State: Actions ────────────────────────────────────────────────────────────
+
+const actionDefs = ref<ActionDef[]>([]);
+
+// ── Global ────────────────────────────────────────────────────────────────────
 
 const saving        = ref(false);
 const saveError     = ref<string | null>(null);
 const loadingPlugin = ref(false);
 const yamlOpen      = ref(false);
 
-// Lifecycle
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+let _counter = 0;
+function uid() { return `a_${Date.now()}_${_counter++}`; }
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 watch(() => props.show, async (val) => {
     if (!val) return;
@@ -114,8 +127,9 @@ function reset() {
     tags.value              = [];
     minIotta.value          = "0.1.0";
     selectedProtocols.value = [];
-    credentialFields.value = [];
-    protocolBlocks.value = [];
+    credentialFields.value  = [];
+    protocolBlocks.value    = [];
+    actionDefs.value        = [];
     saveError.value         = null;
     yamlOpen.value          = false;
 }
@@ -132,10 +146,11 @@ function prefill(plugin: any) {
     authorOrg.value   = plugin.author?.organisation  ?? "";
     authorUrl.value   = plugin.author?.url            ?? "";
     tags.value        = Array.isArray(plugin.tags) ? [...plugin.tags] : [];
-    const deps        = plugin.dependencies?.protocols ?? [];
+
+    const deps = plugin.dependencies?.protocols ?? [];
     selectedProtocols.value = Array.isArray(deps) ? [...deps] : [];
 
-    // credentials.json – stored as _credentials in plugin manifest
+    // credentials.json → _credentials
     if (Array.isArray(plugin._credentials)) {
         credentialFields.value = plugin._credentials.map((f: any) => ({
             field:       f.field       ?? "",
@@ -149,7 +164,7 @@ function prefill(plugin: any) {
         credentialFields.value = [];
     }
 
-    // protocols.json – stored as _protocols
+    // protocols.json → _protocols
     if (plugin._protocols && typeof plugin._protocols === "object") {
         protocolBlocks.value = Object.entries(plugin._protocols).map(
             ([protocolId, config]) => ({ protocolId, config: config as Record<string, unknown> })
@@ -157,9 +172,48 @@ function prefill(plugin: any) {
     } else {
         protocolBlocks.value = [];
     }
+
+    // actions.json → _actions
+    if (plugin._actions && typeof plugin._actions === "object") {
+        const loaded: ActionDef[] = [];
+        for (const category of ["send", "request", "stream"] as const) {
+            const section = plugin._actions[category] ?? {};
+            for (const [actionName, def] of Object.entries(section as Record<string, any>)) {
+                loaded.push({
+                    _id: uid(),
+                    name: actionName,
+                    category,
+                    label:    def.label   ?? "",
+                    protocol: def.protocol ?? "",
+                    method:   def.method   ?? "",
+                    // send
+                    topic:       def.topic ?? "",
+                    payloadJson: def.payload ? JSON.stringify(def.payload, null, 2) : "{}",
+                    inputFields: Object.entries(def.input ?? {})
+                        .filter(([k]) => k !== "path" || category !== "request")
+                        .map(([k, v]: any) => ({
+                            key:      k,
+                            type:     v.type     ?? "string",
+                            required: v.required ?? true,
+                            default:  v.default !== undefined ? String(v.default) : undefined,
+                        })),
+                    exampleJson: def.example ? JSON.stringify(def.example, null, 2) : "{}",
+                    // request
+                    inputPathDefault: def.input?.path?.default ?? "/",
+                    // stream
+                    streamTopic:  def.topic  ?? "",
+                    streamFilter: def.filter ? JSON.stringify(def.filter) : "",
+                    streamMerge:  def.merge  !== false,
+                });
+            }
+        }
+        actionDefs.value = loaded;
+    } else {
+        actionDefs.value = [];
+    }
 }
 
-// Build payload
+// ── Build payloads ────────────────────────────────────────────────────────────
 
 function buildPluginYaml(): Record<string, unknown> {
     const yaml: Record<string, unknown> = {
@@ -195,21 +249,84 @@ function buildProtocolsJson(): Record<string, unknown> | null {
     return obj;
 }
 
-// Validation + Save
+function buildActionsJson(): Record<string, unknown> | null {
+    if (!actionDefs.value.length) return null;
+
+    const result: Record<string, Record<string, unknown>> = {
+        send: {}, request: {}, stream: {},
+    };
+
+    for (const a of actionDefs.value) {
+        if (!a.name.trim()) continue;
+
+        const def: Record<string, unknown> = {
+            protocol: a.protocol,
+            label:    a.label || a.name,
+        };
+        if (a.method) def.method = a.method;
+
+        if (a.category === "send") {
+            if (a.topic.trim()) def.topic = a.topic.trim();
+            try { def.payload = JSON.parse(a.payloadJson); } catch { def.payload = {}; }
+            if (a.inputFields.length) {
+                const inp: Record<string, unknown> = {};
+                for (const f of a.inputFields) {
+                    if (!f.key.trim()) continue;
+                    const fd: Record<string, unknown> = { type: f.type, required: f.required };
+                    if (f.default !== undefined && f.default !== "") fd.default = f.default;
+                    inp[f.key] = fd;
+                }
+                if (Object.keys(inp).length) def.input = inp;
+            }
+            try {
+                const ex = JSON.parse(a.exampleJson);
+                if (Object.keys(ex).length) def.example = ex;
+            } catch { /* skip */ }
+        }
+
+        if (a.category === "request") {
+            def.input = { path: { type: "string", default: a.inputPathDefault || "/" } };
+        }
+
+        if (a.category === "stream") {
+            if (a.streamTopic.trim()) def.topic = a.streamTopic.trim();
+            if (a.streamFilter.trim()) {
+                try { def.filter = JSON.parse(a.streamFilter); } catch { /* skip */ }
+            }
+            def.merge   = a.streamMerge;
+            def.emit_as = "websocket";
+        }
+
+        result[a.category][a.name.trim()] = def;
+    }
+
+    // Drop empty sections
+    for (const k of ["send", "request", "stream"] as const) {
+        if (Object.keys(result[k]).length === 0) delete result[k];
+    }
+
+    return Object.keys(result).length ? result : null;
+}
+
+// ── Validation + Save ─────────────────────────────────────────────────────────
 
 function validate(): string | null {
-    if (!name.value.trim())  return "Name is required.";
-    if (!id.value.trim())    return "Plugin ID is required.";
+    if (!name.value.trim())    return "Name is required.";
+    if (!id.value.trim())      return "Plugin ID is required.";
     if (!/^[a-z0-9][a-z0-9\-]*$/.test(id.value))
         return "Plugin ID must be lowercase alphanumeric with hyphens only.";
     if (!version.value.trim()) return "Version is required.";
 
-    // Validate credential fields
     for (const [i, f] of credentialFields.value.entries()) {
         if (!f.field.trim()) return `Credential field #${i + 1}: field key is required.`;
         if (!f.label.trim()) return `Credential field #${i + 1}: label is required.`;
         if (!/^[a-z0-9_]+$/.test(f.field))
             return `Credential field #${i + 1}: key "${f.field}" must be lowercase letters, numbers and underscores only.`;
+    }
+
+    for (const [i, a] of actionDefs.value.entries()) {
+        if (!a.name.trim())     return `Action #${i + 1}: name is required.`;
+        if (!a.protocol.trim()) return `Action "${a.name}": protocol is required.`;
     }
 
     return null;
@@ -237,8 +354,8 @@ async function save() {
                 body: JSON.stringify({
                     plugin_yaml:      buildPluginYaml(),
                     credentials_json: buildCredentialsJson(),
-                    protocols_json:   null, // TODO: #28
-                    actions_json:     null, // TODO: #29
+                    protocols_json:   buildProtocolsJson(),
+                    actions_json:     buildActionsJson(),
                 }),
             },
         );
@@ -306,17 +423,18 @@ const canSave = computed(() =>
                             @click="activeTab = tab.id"
                         >
                             {{ tab.label }}
-                            <!-- dot indicator if tab has data -->
                             <span
                                 v-if="tab.id === 'credentials' && credentialFields.length"
                                 class="ml-1.5 inline-flex size-1.5 rounded-full bg-primary"
                             />
-
                             <span
                                 v-if="tab.id === 'protocols' && protocolBlocks.length"
                                 class="ml-1.5 inline-flex size-1.5 rounded-full bg-primary"
                             />
-                            
+                            <span
+                                v-if="tab.id === 'actions' && actionDefs.length"
+                                class="ml-1.5 inline-flex size-1.5 rounded-full bg-primary"
+                            />
                         </button>
                     </div>
 
@@ -375,18 +493,29 @@ const canSave = computed(() =>
                             @update:fields="credentialFields = $event"
                         />
 
+                        <!-- Tab: Protocols -->
                         <ProtocolsView
                             v-else-if="activeTab === 'protocols'"
                             :blocks="protocolBlocks"
                             :available-protocols="availableProtocols"
                             @update:blocks="protocolBlocks = $event"
                         />
-                    
-                        <TabPlaceholder v-else-if="activeTab === 'actions'"     label="Actions"            :issue="29" />
-                        <TabPlaceholder v-else-if="activeTab === 'status'"      label="Status / Subscribe" :issue="30" />
-                        <TabPlaceholder v-else-if="activeTab === 'preview'"     label="Preview image"      :issue="31" />
 
-                    </div><!-- end body -->
+                        <!-- Tab: Actions -->
+                        <ActionsView
+                            v-else-if="activeTab === 'actions'"
+                            :actions="actionDefs"
+                            :available-protocols="availableProtocols"
+                            @update:actions="actionDefs = $event"
+                        />
+
+                        <!-- Tab: Status / Subscribe (coming soon) -->
+                        <TabPlaceholder v-else-if="activeTab === 'status'"  label="Status / Subscribe" :issue="30" />
+
+                        <!-- Tab: Preview (coming soon) -->
+                        <TabPlaceholder v-else-if="activeTab === 'preview'" label="Preview image"      :issue="31" />
+
+                    </div>
 
                     <!-- Footer -->
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-border shrink-0">
