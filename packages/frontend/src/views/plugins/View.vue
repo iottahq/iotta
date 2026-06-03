@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import ContextMenu from "@/views/home/ContextMenu.vue";
 import type { ContextMenuItem } from "@/views/home/ContextMenu.vue";
 import PluginEditorDialog from "@/views/plugins/editor/View.vue";
+import PluginStoreModal from "@/views/plugins/PluginStoreModal.vue";
 import {
     RiSearchLine,
     RiRefreshLine,
@@ -17,6 +18,7 @@ import {
     RiAddLine,
     RiPencilLine,
     RiDeleteBinLine,
+    RiStoreLine,
 } from "@remixicon/vue";
 
 type Tab = "protocols" | "devices";
@@ -34,6 +36,10 @@ const deviceIcons = ref<Map<string, string>>(new Map());
 // Context menu 
 
 const contextMenu = ref<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+
+// Plugin store
+
+const showStore = ref(false);
 
 // Plugin editor
 
@@ -207,11 +213,17 @@ function scopeOf(plugin: PluginMeta): string {
                     Loaded protocol and device adapters
                 </p>
             </div>
-            <Button variant="outline" size="sm" :disabled="reloading" @click="reload" class="gap-1.5">
-                <RiLoader4Line v-if="reloading" class="size-3.5 animate-spin" />
-                <RiRefreshLine v-else class="size-3.5" />
-                Reload all
-            </Button>
+            <div class="flex items-center gap-2">
+                <Button variant="outline" size="sm" class="gap-1.5" @click="showStore = true">
+                    <RiStoreLine class="size-3.5" />
+                    Store
+                </Button>
+                <Button variant="outline" size="sm" :disabled="reloading" @click="reload" class="gap-1.5">
+                    <RiLoader4Line v-if="reloading" class="size-3.5 animate-spin" />
+                    <RiRefreshLine v-else class="size-3.5" />
+                    Reload all
+                </Button>
+            </div>
         </div>
 
         <!-- Tabs + Search -->
@@ -392,6 +404,15 @@ function scopeOf(plugin: PluginMeta): string {
         :y="contextMenu.y"
         :items="contextMenu.items"
         @close="contextMenu = null"
+    />
+
+    <!-- Plugin store -->
+    <PluginStoreModal
+        :show="showStore"
+        :installed-device-ids="devices.map(d => d.id)"
+        :installed-protocol-ids="protocols.map(p => p.id)"
+        @update:show="showStore = $event"
+        @installed="load"
     />
 
     <!-- Plugin editor -->
