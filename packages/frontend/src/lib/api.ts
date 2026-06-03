@@ -82,6 +82,40 @@ export interface PluginMeta {
     tags?: string[];
 }
 
+export interface RegistryPlugin {
+    id: string;
+    type: "devices" | "protocols";
+    name: string;
+    version: string;
+    status?: string;
+    scope?: string;
+    description?: string;
+    author?: { name?: string; organisation?: string; url?: string };
+    license?: string;
+    tags?: string[];
+    dependencies?: Record<string, unknown>;
+    min_iotta_version?: string;
+    path: string;
+    icon_url?: string;
+}
+
+export interface RegistryIndex {
+    version: string;
+    generated_at: string;
+    plugins: {
+        devices: RegistryPlugin[];
+        protocols: RegistryPlugin[];
+    };
+}
+
+export interface RegistryInstallResult {
+    installed: boolean;
+    id: string;
+    type: string;
+    version: string;
+    name: string;
+}
+
 export interface PluginList<T> {
     count: number;
     items: T[];
@@ -297,6 +331,45 @@ export const api = {
             post<{ message: string; protocols: number; devices: number }>(
                 "/plugins/reload",
             ),
+        registry: {
+            fetch: () => get<RegistryIndex>("/plugins/registry"),
+            install: (type: string, id: string) =>
+                post<RegistryInstallResult>(`/plugins/registry/install/${type}/${id}`),
+            installGit: async (url: string): Promise<RegistryInstallResult> => {
+                const token = tokenStore.get();
+                const form = new FormData();
+                form.append("url", url);
+                const res = await fetch(`${BASE_URL}/plugins/registry/install-git`, {
+                    method: "POST",
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    body: form,
+                });
+                if (!res.ok) {
+                    let detail = res.statusText;
+                    try { detail = (await res.json()).detail ?? detail; } catch {}
+                    throw new ApiError(res.status, detail);
+                }
+                return res.json();
+            },
+            installZip: async (file: File): Promise<RegistryInstallResult> => {
+                const token = tokenStore.get();
+                const form = new FormData();
+                form.append("file", file);
+                const res = await fetch(`${BASE_URL}/plugins/registry/install-zip`, {
+                    method: "POST",
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    body: form,
+                });
+                if (!res.ok) {
+                    let detail = res.statusText;
+                    try { detail = (await res.json()).detail ?? detail; } catch {}
+                    throw new ApiError(res.status, detail);
+                }
+                return res.json();
+            },
+            uninstall: (type: string, id: string) =>
+                del(`/plugins/registry/${type}/${id}`),
+        },
     },
     
     ws: {

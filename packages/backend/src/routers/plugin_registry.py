@@ -2,18 +2,24 @@
 plugin_registry.py – Router for the public plugin registry.
 
 Endpoints:
-  GET  /plugins/registry                   → fetch registry index from GitHub
-  POST /plugins/registry/install/{type}/{id} → download & install a plugin from registry
-  DELETE /plugins/registry/{type}/{id}     → uninstall a registry-installed plugin
+  GET  /plugins/registry                      → fetch registry index from GitHub
+  POST /plugins/registry/install/{type}/{id}  → download & install a plugin from registry
+  POST /plugins/registry/install-git          → install from a git repository URL
+  POST /plugins/registry/install-zip          → install from an uploaded zip file
+  DELETE /plugins/registry/{type}/{id}        → uninstall a registry-installed plugin
 """
 
 import io
+import shutil
+import subprocess
 import tarfile
+import tempfile
+import zipfile
 from pathlib import Path
 
 import httpx
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from src.logging import get_logger
 from src.plugins.loader import DEVICES_DIR, PROTOCOLS_DIR, plugin_loader
 
@@ -118,6 +124,107 @@ async def install_plugin(plugin_type: str, plugin_id: str):
         "version": meta.get("version"),
         "name": meta.get("name"),
     }
+
+
+def _detect_plugin_type(meta: dict) -> str:
+    """Infer plugin type from plugin.yaml: presence of 'entry' means protocol, otherwise device."""
+    return "protocols" if meta.get("entry") else "devices"
+
+
+def _install_from_dir(source_dir: Path) -> dict:
+    """
+    Validate a directory contains a valid plugin, auto-detect its type, move it to the
+    plugins dir, hot-reload. Returns the install result dict.
+    """
+    manifest_path = source_dir / "plugin.yaml"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=422, detail="No plugin.yaml found in the repository root")
+
+    with open(manifest_path) as f:
+        meta = yaml.safe_load(f) or {}
+
+    plugin_id = meta.get("id")
+    if not plugin_id:
+        raise HTTPException(status_code=422, detail="plugin.yaml is missing required field: id")
+
+    plugin_type = _detect_plugin_type(meta)
+
+    target_dir = _target_dir(plugin_type, plugin_id)
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+
+    shutil.copytree(source_dir, target_dir)
+
+    if plugin_type == "devices":
+        plugin_loader.reload_devices()
+    else:
+        plugin_loader.reload_all()
+
+    logger.info(f"Installed custom plugin '{plugin_type}/{plugin_id}' v{meta.get('version', '?')}")
+    return {
+        "installed": True,
+        "id": plugin_id,
+        "type": plugin_type,
+        "version": meta.get("version"),
+        "name": meta.get("name"),
+    }
+
+
+@router.post("/install-git")
+async def install_from_git(url: str = Form(...)):
+    """Clone a git repository and install its root as a plugin. Type is auto-detected from plugin.yaml."""
+    logger.info(f"Installing plugin from git: {url}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_dir = Path(tmpdir) / "repo"
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth", "1", url, str(clone_dir)],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"git clone failed: {e.stderr.decode().strip() or e.stdout.decode().strip()}",
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=500, detail="git is not available on this server")
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="git clone timed out")
+
+        shutil.rmtree(clone_dir / ".git", ignore_errors=True)
+        return _install_from_dir(clone_dir)
+
+
+@router.post("/install-zip")
+async def install_from_zip(file: UploadFile = File(...)):
+    """Extract an uploaded zip and install its contents as a plugin. Type is auto-detected from plugin.yaml."""
+    if not file.filename or not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=422, detail="Uploaded file must be a .zip archive")
+
+    logger.info(f"Installing plugin from zip: {file.filename}")
+    contents = await file.read()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        extract_dir = Path(tmpdir) / "extracted"
+        extract_dir.mkdir()
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(contents)) as zf:
+                zf.extractall(extract_dir)
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=422, detail="Uploaded file is not a valid zip archive")
+
+        # Support both flat zips (files at root) and wrapped zips (single top-level folder)
+        entries = list(extract_dir.iterdir())
+        if len(entries) == 1 and entries[0].is_dir() and not (extract_dir / "plugin.yaml").exists():
+            plugin_dir = entries[0]
+        else:
+            plugin_dir = extract_dir
+
+        return _install_from_dir(plugin_dir)
 
 
 @router.delete("/{plugin_type}/{plugin_id}")
