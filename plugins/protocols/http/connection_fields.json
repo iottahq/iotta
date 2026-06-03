@@ -1,0 +1,6 @@
+[
+    { "key": "base_url",   "label": "Base URL",    "value_type": "string",  "placeholder": "http://{ip}",                                        "required": true },
+    { "key": "timeout",    "label": "Timeout (s)", "value_type": "number",  "placeholder": "10",                                                  "default": 10 },
+    { "key": "verify_ssl", "label": "Verify SSL",  "value_type": "boolean",                                                                       "default": false },
+    { "key": "auth",       "label": "Auth",        "value_type": "object",  "placeholder": "{\"type\":\"bearer\",\"token\":\"{token}\"}",          "description": "bearer | basic | api-key | none" }
+]

@@ -38,12 +38,26 @@ interface Capability {
     output?: Record<string, unknown>;
 }
 
+interface ConnectionFieldRaw {
+    key: string;
+    label: string;
+    value_type: "string" | "number" | "boolean" | "array" | "object";
+    placeholder?: string;
+    description?: string;
+    default?: unknown;
+    required?: boolean;
+}
+
 // Props / Emits
 
 const props = defineProps<{
     blocks: ProtocolConfig[];
-    // availableProtocols already carries meta.capabilities from the loader
-    availableProtocols: { id: string; name: string; capabilities?: Record<string, Capability> }[];
+    availableProtocols: {
+        id: string;
+        name: string;
+        capabilities?: Record<string, Capability>;
+        connection_fields?: ConnectionFieldRaw[];
+    }[];
 }>();
 
 const emit = defineEmits<{
@@ -82,39 +96,18 @@ interface ConfigFieldDef {
     capabilityId?: string;
 }
 
-// Minimal connection-level fields that every protocol needs to connect.
-// These are NOT in capabilities.yaml (which only describes actions).
-// This will change in the future 
-const CONNECTION_FIELDS: Record<string, ConfigFieldDef[]> = {
-    mqtt: [
-        { key: "host",               label: "Host",               valueType: "string",  placeholder: "{ip}",            required: true,  source: "connection" },
-        { key: "port",               label: "Port",               valueType: "number",  placeholder: "8883",            defaultValue: 8883, source: "connection" },
-        { key: "tls",                label: "TLS",                valueType: "boolean", defaultValue: true,             source: "connection" },
-        { key: "username",           label: "Username",           valueType: "string",  placeholder: "{username}",      source: "connection" },
-        { key: "password",           label: "Password",           valueType: "string",  placeholder: "{access_code}",   source: "connection" },
-        { key: "subscribe_topics",   label: "Subscribe topics",   valueType: "array",   placeholder: "device/{serial}/report", description: "One topic per line", source: "connection" },
-        { key: "on_connect_publish", label: "On-connect publish", valueType: "object",  placeholder: '{"topic":"...","payload":{}}', description: "Published immediately after connecting", source: "connection" },
-        { key: "methods",            label: "Allowed methods",    valueType: "array",   placeholder: "publish", description: "Leave empty for all", source: "connection" },
-    ],
-    ftp: [
-        { key: "host",     label: "Host",       valueType: "string",  placeholder: "{ip}",          required: true, source: "connection" },
-        { key: "port",     label: "Port",       valueType: "number",  placeholder: "990",            defaultValue: 990, source: "connection" },
-        { key: "tls",      label: "TLS mode",   valueType: "string",  placeholder: "implicit",       description: "none | explicit | implicit", source: "connection" },
-        { key: "username", label: "Username",   valueType: "string",  placeholder: "{username}",    source: "connection" },
-        { key: "password", label: "Password",   valueType: "string",  placeholder: "{access_code}", source: "connection" },
-        { key: "methods",  label: "Methods",    valueType: "string",  placeholder: "all",            description: 'Comma-separated capability IDs or "all"', source: "connection" },
-    ],
-    http: [
-        { key: "base_url",   label: "Base URL",    valueType: "string",  placeholder: "http://{ip}", required: true, source: "connection" },
-        { key: "timeout",    label: "Timeout (s)", valueType: "number",  placeholder: "10",           defaultValue: 10, source: "connection" },
-        { key: "verify_ssl", label: "Verify SSL",  valueType: "boolean", defaultValue: false,         source: "connection" },
-        { key: "auth",       label: "Auth",        valueType: "object",  placeholder: '{"type":"bearer","token":"{token}"}', description: "bearer | basic | api-key | none", source: "connection" },
-    ],
-    ws: [
-        { key: "url",     label: "URL",     valueType: "string", placeholder: "ws://{ip}:{port}/ws", required: true, source: "connection" },
-        { key: "headers", label: "Headers", valueType: "object", placeholder: '{"Authorization":"Bearer {token}"}', description: "Extra HTTP headers for the handshake", source: "connection" },
-    ],
-};
+function connectionFieldRawToFieldDef(raw: ConnectionFieldRaw): ConfigFieldDef {
+    return {
+        key:          raw.key,
+        label:        raw.label,
+        valueType:    raw.value_type,
+        placeholder:  raw.placeholder,
+        description:  raw.description,
+        defaultValue: raw.default,
+        required:     raw.required,
+        source:       "connection",
+    };
+}
 
 function capabilityInputToFieldDef(
     capId: string,
@@ -144,10 +137,12 @@ function capabilityInputToFieldDef(
 function getConfigFields(protocolId: string): ConfigFieldDef[] {
     const proto = props.availableProtocols.find((p) => p.id === protocolId);
     const capabilities = proto?.capabilities ?? {};
-    const connectionFields = CONNECTION_FIELDS[protocolId] ?? [
-        { key: "host", label: "Host", valueType: "string" as const, placeholder: "hostname or IP", required: true, source: "connection" as const },
-        { key: "port", label: "Port", valueType: "number" as const, placeholder: "port number", source: "connection" as const },
-    ];
+    const connectionFields: ConfigFieldDef[] = proto?.connection_fields
+        ? proto.connection_fields.map(connectionFieldRawToFieldDef)
+        : [
+            { key: "host", label: "Host", valueType: "string" as const, placeholder: "hostname or IP", required: true, source: "connection" as const },
+            { key: "port", label: "Port", valueType: "number" as const, placeholder: "port number", source: "connection" as const },
+          ];
 
     // Collect capability-derived fields (deduplicated by key, skipping keys already in connectionFields)
     const connectionKeys = new Set(connectionFields.map((f) => f.key));

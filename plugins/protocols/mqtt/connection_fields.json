@@ -1,0 +1,10 @@
+[
+    { "key": "host",               "label": "Host",               "value_type": "string",  "placeholder": "{ip}",                                    "required": true },
+    { "key": "port",               "label": "Port",               "value_type": "number",  "placeholder": "8883",                                    "default": 8883 },
+    { "key": "tls",                "label": "TLS",                "value_type": "boolean",                                                            "default": true },
+    { "key": "username",           "label": "Username",           "value_type": "string",  "placeholder": "{username}" },
+    { "key": "password",           "label": "Password",           "value_type": "string",  "placeholder": "{access_code}" },
+    { "key": "subscribe_topics",   "label": "Subscribe topics",   "value_type": "array",   "placeholder": "device/{serial}/report",                  "description": "One topic per line" },
+    { "key": "on_connect_publish", "label": "On-connect publish", "value_type": "object",  "placeholder": "{\"topic\":\"...\",\"payload\":{}}",       "description": "Published immediately after connecting" },
+    { "key": "methods",            "label": "Allowed methods",    "value_type": "array",   "placeholder": "publish",                                 "description": "Leave empty for all" }
+]

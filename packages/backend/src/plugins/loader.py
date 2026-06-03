@@ -101,6 +101,19 @@ def _pip_to_import_name(package: str) -> str:
     return mapping.get(package.lower(), package.lower())
 
 
+def _load_connection_fields(protocol_dir: Path, protocol_name: str) -> list | None:
+    """Load connection_fields.json from the protocol plugin directory if present."""
+    path = protocol_dir / "connection_fields.json"
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load connection_fields.json for '{protocol_name}': {e}")
+        return None
+
+
 def _load_capabilities(protocol_dir: Path, protocol_name: str) -> dict | None:
     """
     Loads capabilities.yaml from the protocol plugin directory if present.
@@ -243,6 +256,10 @@ class PluginLoader:
             capabilities = _load_capabilities(protocol_dir, protocol_id)
             if capabilities is not None:
                 meta["capabilities"] = capabilities
+
+            connection_fields = _load_connection_fields(protocol_dir, protocol_id)
+            if connection_fields is not None:
+                meta["connection_fields"] = connection_fields
 
             self._protocols[protocol_id] = {"class": protocol_class, "meta": meta}
 

@@ -1,0 +1,8 @@
+[
+    { "key": "host",     "label": "Host",     "value_type": "string",  "placeholder": "{ip}",          "required": true },
+    { "key": "port",     "label": "Port",     "value_type": "number",  "placeholder": "990",            "default": 990 },
+    { "key": "tls",      "label": "TLS mode", "value_type": "string",  "placeholder": "implicit",       "description": "none | explicit | implicit" },
+    { "key": "username", "label": "Username", "value_type": "string",  "placeholder": "{username}" },
+    { "key": "password", "label": "Password", "value_type": "string",  "placeholder": "{access_code}" },
+    { "key": "methods",  "label": "Methods",  "value_type": "string",  "placeholder": "all",            "description": "Comma-separated capability IDs or \"all\"" }
+]

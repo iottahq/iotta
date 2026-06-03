@@ -1,0 +1,4 @@
+[
+    { "key": "url",     "label": "URL",     "value_type": "string", "placeholder": "ws://{ip}:{port}/ws",                         "required": true },
+    { "key": "headers", "label": "Headers", "value_type": "object", "placeholder": "{\"Authorization\":\"Bearer {token}\"}",       "description": "Extra HTTP headers for the handshake" }
+]
