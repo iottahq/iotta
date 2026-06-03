@@ -20,9 +20,9 @@ from src.plugins.loader import DEVICES_DIR, PROTOCOLS_DIR, plugin_loader
 logger = get_logger("core")
 router = APIRouter(prefix="/plugins/registry", tags=["plugin-registry"])
 
-REGISTRY_URL = "https://raw.githubusercontent.com/iottahq/plugins/main/registry.json"
-REPO_TARBALL_URL = "https://codeload.github.com/iottahq/plugins/tar.gz/refs/heads/main"
-TARBALL_PREFIX = "plugins-main"  # top-level dir name inside the tarball
+REGISTRY_URL = "https://raw.githubusercontent.com/iottahq/iotta-plugins/main/registry.json"
+REPO_TARBALL_URL = "https://codeload.github.com/iottahq/iotta-plugins/tar.gz/refs/heads/main"
+TARBALL_PREFIX = "iotta-plugins-main"  # top-level dir name inside the tarball
 
 
 def _target_dir(plugin_type: str, plugin_id: str) -> Path:
