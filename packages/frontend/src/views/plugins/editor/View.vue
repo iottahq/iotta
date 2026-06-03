@@ -15,7 +15,7 @@ import ActionsView, { type ActionDef } from "./actions/View.vue";
 import TabPlaceholder from "./TabPlaceholder.vue";
 import PreviewView, { type IconAsset } from "./preview/View.vue";
 
-// ── Props / Emits ─────────────────────────────────────────────────────────────
+// Props / Emits
 
 const props = defineProps<{
     show: boolean;
@@ -27,7 +27,7 @@ const emit = defineEmits<{
     saved: [pluginId: string];
 }>();
 
-// ── Tabs ──────────────────────────────────────────────────────────────────────
+// Tabs 
 
 type TabId = "base" | "credentials" | "protocols" | "actions" | "status" | "preview";
 
@@ -42,7 +42,7 @@ const TABS: { id: TabId; label: string }[] = [
 
 const activeTab = ref<TabId>("base");
 
-// ── State: Base Info ──────────────────────────────────────────────────────────
+// State: Base Info
 
 const name               = ref("");
 const id                 = ref("");
@@ -60,35 +60,35 @@ const availableProtocols = ref<{ id: string; name: string }[]>([]);
 const selectedProtocols  = ref<string[]>([]);
 const loadingProtocols   = ref(false);
 
-// ── State: Credentials ────────────────────────────────────────────────────────
+// State: Credentials
 
 const credentialFields = ref<CredentialField[]>([]);
 
-// ── State: Protocols ──────────────────────────────────────────────────────────
+// State: Protocols
 
 const protocolBlocks = ref<ProtocolConfig[]>([]);
 
-// ── State: Actions ────────────────────────────────────────────────────────────
+// State: Actions 
 
 const actionDefs = ref<ActionDef[]>([]);
 
-// ── State: Icon ───────────────────────────────────────────────────────────────
+// State: Icon
 
 const iconAsset = ref<IconAsset | null>(null);
 
-// ── Global ────────────────────────────────────────────────────────────────────
+// Global
 
 const saving        = ref(false);
 const saveError     = ref<string | null>(null);
 const loadingPlugin = ref(false);
 const yamlOpen      = ref(false);
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Helpers
 
 let _counter = 0;
 function uid() { return `a_${Date.now()}_${_counter++}`; }
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
+// Lifecycle
 
 watch(() => props.show, async (val) => {
     if (!val) return;
@@ -219,7 +219,7 @@ function prefill(plugin: any) {
     }
 }
 
-// ── Build payloads ────────────────────────────────────────────────────────────
+// Build payloads
 
 function buildPluginYaml(): Record<string, unknown> {
     const yaml: Record<string, unknown> = {
@@ -314,7 +314,7 @@ function buildActionsJson(): Record<string, unknown> | null {
     return Object.keys(result).length ? result : null;
 }
 
-// ── Validation + Save ─────────────────────────────────────────────────────────
+// Validation + Save
 
 function validate(): string | null {
     if (!name.value.trim())    return "Name is required.";

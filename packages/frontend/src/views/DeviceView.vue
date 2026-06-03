@@ -27,7 +27,7 @@ import {
 const route = useRoute();
 const deviceId = route.params.id as string;
 
-// ── State ──────────────────────────────────────────────────────────────────
+// State
 
 const device = ref<Device | null>(null);
 const credential = ref<Credential | null>(null);
@@ -56,7 +56,7 @@ const streamSockets = ref<Record<string, WebSocket>>({});
 const streamMessages = ref<Record<string, unknown[]>>({});
 const streamConnected = ref<Record<string, boolean>>({});
 
-// ── Load ───────────────────────────────────────────────────────────────────
+// Load
 
 onMounted(async () => {
   loading.value = true;
@@ -105,7 +105,7 @@ onUnmounted(() => {
   }
 });
 
-// ── Ping ───────────────────────────────────────────────────────────────────
+// Ping
 
 async function ping() {
   pinging.value = true;
@@ -123,7 +123,7 @@ async function ping() {
   }
 }
 
-// ── Actions ────────────────────────────────────────────────────────────────
+// Actions
 
 async function runSend(name: string) {
   actionRunning.value[name] = true;
@@ -190,7 +190,7 @@ function toggleStream(name: string) {
   }
 }
 
-// ── Computed helpers ───────────────────────────────────────────────────────
+// Computed helpers
 
 const sendActions = computed(() =>
   Object.entries<any>(pluginConfig.value?.actions?.send ?? {}),

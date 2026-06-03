@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch, onUnmounted } from "vue";
 import { Button } from "@/components/ui/button";
+import { fetchAssetBlobUrl } from "@/lib/api";
 import {
     RiUploadLine,
     RiDeleteBinLine,
@@ -9,7 +10,7 @@ import {
     RiCheckLine,
 } from "@remixicon/vue";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// Types
 
 export interface IconAsset {
     /** Original filename */
@@ -22,7 +23,7 @@ export interface IconAsset {
     mimeType: string;
 }
 
-// ── Props / Emits ─────────────────────────────────────────────────────────────
+// Props / Emits
 
 const props = defineProps<{
     icon: IconAsset | null;
@@ -34,29 +35,46 @@ const emit = defineEmits<{
     "update:icon": [v: IconAsset | null];
 }>();
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// State
 
-const dragOver   = ref(false);
-const fileInput  = ref<HTMLInputElement | null>(null);
-const sizeError  = ref<string | null>(null);
+const dragOver       = ref(false);
+const fileInput      = ref<HTMLInputElement | null>(null);
+const sizeError      = ref<string | null>(null);
+const existingBlobUrl = ref<string | null>(null);
 
 const MAX_SIZE_BYTES = 512 * 1024; // 512 KB
 
-// Existing icon URL when editing a saved plugin
-const existingIconUrl = computed(() =>
-    props.pluginId
-        ? `http://localhost:8000/plugins/devices/${props.pluginId}/assets/icon`
-        : null
+// Fetch the saved icon via authenticated request whenever pluginId changes
+watch(
+    () => props.pluginId,
+    async (id) => {
+        if (existingBlobUrl.value) {
+            URL.revokeObjectURL(existingBlobUrl.value);
+            existingBlobUrl.value = null;
+        }
+        if (!id) return;
+        try {
+            existingBlobUrl.value = await fetchAssetBlobUrl(
+                `/plugins/devices/${id}/assets/icon`,
+            );
+        } catch {
+            // No icon saved yet — leave null
+        }
+    },
+    { immediate: true },
 );
+
+onUnmounted(() => {
+    if (existingBlobUrl.value) URL.revokeObjectURL(existingBlobUrl.value);
+});
 
 // What to show in the preview: new upload takes priority, then existing
 const previewUrl = computed(() => {
     if (props.icon) return props.icon.dataUrl;
-    if (existingIconUrl.value) return existingIconUrl.value;
-    return null;
+    return existingBlobUrl.value;
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Helpers
 
 function triggerPicker() {
     fileInput.value?.click();
@@ -84,6 +102,7 @@ async function handleFile(file: File) {
             base64,
             mimeType: file.type,
         });
+        if (fileInput.value) fileInput.value.value = "";
     };
     reader.readAsDataURL(file);
 }

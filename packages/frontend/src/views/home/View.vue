@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useNewDevice } from "@/composables/useNewDevice";
 import { useRouter } from "vue-router";
-import { api, type Device, type Group, ApiError } from "@/lib/api";
+import { api, type Device, type Group, ApiError, fetchAssetBlobUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import NewGroupDialog from "./group/NewDialog.vue";
@@ -106,9 +106,28 @@ const pluginIconMap: Record<string, Component> = {
     "bambu-lab-a1": RiPrinterLine,
 };
 
-function getPluginIcon(pluginId: string): Component {
+function getFallbackIcon(pluginId: string): Component {
     return pluginIconMap[pluginId] ?? RiServerLine;
 }
+
+const pluginBlobIcons = ref<Map<string, string>>(new Map());
+
+async function loadPluginIcons(pluginIds: string[]) {
+    pluginBlobIcons.value.forEach((url) => URL.revokeObjectURL(url));
+    const map = new Map<string, string>();
+    await Promise.allSettled(
+        pluginIds.map(async (id) => {
+            try {
+                map.set(id, await fetchAssetBlobUrl(`/plugins/devices/${id}/assets/icon`));
+            } catch { /* no icon */ }
+        }),
+    );
+    pluginBlobIcons.value = map;
+}
+
+onUnmounted(() => {
+    pluginBlobIcons.value.forEach((url) => URL.revokeObjectURL(url));
+});
 
 async function load() {
     loading.value = true;
@@ -122,6 +141,8 @@ async function load() {
         devices.value = devList.map((d) => ({ ...d, online: null }));
         buildSections();
         pingAll();
+        const uniquePluginIds = [...new Set(devList.map((d) => d.plugin_id))];
+        loadPluginIcons(uniquePluginIds);
     } catch (e) {
         error.value = e instanceof ApiError ? e.detail : "Failed to load";
     } finally {
@@ -576,7 +597,8 @@ function isDragTarget(s: GroupSection) {
                             :class="['group flex cursor-pointer rounded-lg border border-border bg-card transition-all hover:border-primary/40 hover:shadow-sm', dragging === device.id ? 'opacity-40 scale-95' : '', viewMode === 'grid' ? 'flex-col overflow-hidden' : 'flex-row items-center gap-3 px-3 py-2']"
                         >
                             <div v-if="viewMode === 'grid'" class="flex items-center justify-center h-28 bg-muted/30 border-b border-border relative">
-                                <component :is="getPluginIcon(device.plugin_id)" class="size-10 text-muted-foreground/40" />
+                                <img v-if="pluginBlobIcons.get(device.plugin_id)" :src="pluginBlobIcons.get(device.plugin_id)" class="size-16 object-contain" />
+                                <component v-else :is="getFallbackIcon(device.plugin_id)" class="size-10 text-muted-foreground/40" />
                                 <div class="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground cursor-grab">
                                     <RiDraggable class="size-3.5" />
                                 </div>
@@ -587,7 +609,8 @@ function isDragTarget(s: GroupSection) {
                                 <span class="text-[10px] text-muted-foreground font-mono truncate">{{ device.plugin_id }}</span>
                             </div>
 
-                            <component v-if="viewMode === 'list'" :is="getPluginIcon(device.plugin_id)" class="size-4 text-muted-foreground shrink-0" />
+                            <img v-if="viewMode === 'list' && pluginBlobIcons.get(device.plugin_id)" :src="pluginBlobIcons.get(device.plugin_id)" class="size-4 object-contain shrink-0" />
+                            <component v-else-if="viewMode === 'list'" :is="getFallbackIcon(device.plugin_id)" class="size-4 text-muted-foreground shrink-0" />
                             <div v-if="viewMode === 'list'" class="flex-1 min-w-0 flex items-center gap-2">
                                 <span class="text-xs font-medium text-foreground truncate">{{ device.name }}</span>
                                 <span class="text-[10px] text-muted-foreground font-mono truncate hidden sm:block">{{ device.plugin_id }}</span>

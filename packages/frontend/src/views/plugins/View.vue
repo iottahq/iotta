@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
-import { api, type PluginMeta, ApiError } from "@/lib/api";
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import { api, type PluginMeta, ApiError, fetchAssetBlobUrl } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import ContextMenu from "@/views/home/ContextMenu.vue";
@@ -29,6 +29,7 @@ const protocols = ref<PluginMeta[]>([]);
 const devices = ref<PluginMeta[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
+const deviceIcons = ref<Map<string, string>>(new Map());
 
 // Context menu 
 
@@ -121,6 +122,22 @@ function onDevicePluginContextMenu(e: MouseEvent, plugin: PluginMeta) {
 
 // Load
 
+async function loadIcons(pluginIds: string[]) {
+    // Revoke old blob URLs
+    deviceIcons.value.forEach((url) => URL.revokeObjectURL(url));
+    const map = new Map<string, string>();
+    await Promise.allSettled(
+        pluginIds.map(async (id) => {
+            try {
+                map.set(id, await fetchAssetBlobUrl(`/plugins/devices/${id}/assets/icon`));
+            } catch {
+                // No icon for this plugin
+            }
+        }),
+    );
+    deviceIcons.value = map;
+}
+
 async function load() {
     loading.value = true;
     error.value   = null;
@@ -131,12 +148,17 @@ async function load() {
         ]);
         protocols.value = p.items;
         devices.value   = d.items;
+        loadIcons(d.items.map((p) => p.id));
     } catch (e) {
         error.value = e instanceof ApiError ? e.detail : "Failed to load plugins";
     } finally {
         loading.value = false;
     }
 }
+
+onUnmounted(() => {
+    deviceIcons.value.forEach((url) => URL.revokeObjectURL(url));
+});
 
 async function reload() {
     reloading.value = true;
@@ -265,7 +287,20 @@ function scopeOf(plugin: PluginMeta): string {
                 >
                     <!-- Top row -->
                     <div class="flex items-start justify-between gap-2">
-                        <div class="min-w-0">
+                        <!-- Plugin icon (device plugins only) -->
+                        <div
+                            v-if="activeTab === 'devices'"
+                            class="shrink-0 w-8 h-8 rounded-md border border-border bg-muted/30 flex items-center justify-center overflow-hidden"
+                        >
+                            <img
+                                v-if="deviceIcons.get(plugin.id)"
+                                :src="deviceIcons.get(plugin.id)"
+                                :alt="plugin.name"
+                                class="w-full h-full object-contain p-0.5"
+                            />
+                            <RiPlugLine v-else class="size-4 text-muted-foreground/40" />
+                        </div>
+                        <div class="min-w-0 flex-1">
                             <div class="flex items-center gap-1.5 flex-wrap">
                                 <span class="text-xs font-semibold text-foreground truncate">{{ plugin.name }}</span>
 

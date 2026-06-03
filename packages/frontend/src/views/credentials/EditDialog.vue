@@ -35,7 +35,7 @@ const emit = defineEmits<{
     delete: [];
 }>();
 
-// ── Local state ────────────────────────────────────────────────────────────
+// Local state
 
 const name = ref("");
 const fields = ref<FieldEntry[]>([]);
@@ -62,7 +62,7 @@ watch(
     { immediate: true },
 );
 
-// ── Field management ───────────────────────────────────────────────────────
+// Field management
 
 function addField() {
     fields.value.push({ originalKey: null, key: "", value: "", secret: false });
@@ -81,7 +81,7 @@ function toggleReveal(idx: number) {
     revealed.value[idx] = !revealed.value[idx];
 }
 
-// ── Submit ─────────────────────────────────────────────────────────────────
+// Submit 
 
 function submit() {
     const data: Record<string, string> = {};

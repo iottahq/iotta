@@ -149,6 +149,16 @@ export class ApiError extends Error {
     }
 }
 
+export async function fetchAssetBlobUrl(path: string): Promise<string> {
+    const token = tokenStore.get();
+    const res = await fetch(`${BASE_URL}${path}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+}
+
 async function request<T>(
     method: string,
     path: string,

@@ -5,7 +5,9 @@
         "tls": true,
         "username": "bblp",
         "password": "{access_code}",
-        "subscribe_topics": ["device/{serial}/report"],
+        "subscribe_topics": [
+            "device/{serial}/report"
+        ],
         "on_connect_publish": {
             "topic": "device/{serial}/request",
             "payload": {
@@ -17,7 +19,10 @@
                 }
             }
         },
-        "methods": ["publish", "subscribe"]
+        "methods": [
+            "publish",
+            "subscribe"
+        ]
     },
     "ftp": {
         "host": "{ip}",

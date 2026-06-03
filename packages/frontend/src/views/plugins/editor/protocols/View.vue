@@ -14,7 +14,7 @@ import {
     RiCheckLine,
 } from "@remixicon/vue";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// Types 
 
 export interface ProtocolConfig {
     protocolId: string;
@@ -38,7 +38,7 @@ interface Capability {
     output?: Record<string, unknown>;
 }
 
-// ── Props / Emits ─────────────────────────────────────────────────────────────
+// Props / Emits
 
 const props = defineProps<{
     blocks: ProtocolConfig[];
@@ -50,13 +50,13 @@ const emit = defineEmits<{
     "update:blocks": [v: ProtocolConfig[]];
 }>();
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// State
 
 const showJson   = ref(false);
 const collapsed  = ref<Record<number, boolean>>({});
 const showPicker = ref(false);
 
-// ── Derive config fields from capabilities ────────────────────────────────────
+// Derive config fields from capabilities
 
 /**
  * Collect all unique input fields across all capabilities of a protocol.
@@ -165,7 +165,7 @@ function getConfigFields(protocolId: string): ConfigFieldDef[] {
     return [...connectionFields, ...capabilityFieldMap.values()];
 }
 
-// ── Block management ──────────────────────────────────────────────────────────
+// Block management
 
 function isAdded(protocolId: string) {
     return props.blocks.some((b) => b.protocolId === protocolId);

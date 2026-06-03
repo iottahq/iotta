@@ -3,10 +3,9 @@ name: Bambu Lab A1
 version: 1.0.0
 status: alpha
 scope: core
-description: >
-  Bambu Lab A1 FDM 3D printer.
-  Supports print control, file management, AMS, camera snapshot, and real-time status.
-  Requires LAN mode to be enabled in the printer settings.
+description: Bambu Lab A1 FDM 3D printer. Supports print control, file management,
+  AMS, camera snapshot, and real-time status. Requires LAN mode to be enabled in the
+  printer settings.
 author:
   name: Elias Bergmann
   organisation: iottahq
@@ -16,11 +15,11 @@ requirements:
   - firmware: ">=01.04"
   - lan_mode: true
 tags:
-  - 3d-printer
-  - bambu
-  - fdm
+- 3d-printer
+- bambu
+- fdm
 dependencies:
   protocols:
-    - mqtt
-    - ftp
+  - mqtt
+  - ftp
 min_iotta_version: 0.1.0
