@@ -181,39 +181,23 @@ function prefill(plugin: any) {
 
     // actions.json → _actions
     if (plugin._actions && typeof plugin._actions === "object") {
-        const loaded: ActionDef[] = [];
-        for (const category of ["send", "request", "stream"] as const) {
-            const section = plugin._actions[category] ?? {};
-            for (const [actionName, def] of Object.entries(section as Record<string, any>)) {
-                loaded.push({
-                    _id: uid(),
-                    name: actionName,
-                    category,
-                    label:    def.label   ?? "",
-                    protocol: def.protocol ?? "",
-                    method:   def.method   ?? "",
-                    // send
-                    topic:       def.topic ?? "",
-                    payloadJson: def.payload ? JSON.stringify(def.payload, null, 2) : "{}",
-                    inputFields: Object.entries(def.input ?? {})
-                        .filter(([k]) => k !== "path" || category !== "request")
-                        .map(([k, v]: any) => ({
-                            key:      k,
-                            type:     v.type     ?? "string",
-                            required: v.required ?? true,
-                            default:  v.default !== undefined ? String(v.default) : undefined,
-                        })),
-                    exampleJson: def.example ? JSON.stringify(def.example, null, 2) : "{}",
-                    // request
-                    inputPathDefault: def.input?.path?.default ?? "/",
-                    // stream
-                    streamTopic:  def.topic  ?? "",
-                    streamFilter: def.filter ? JSON.stringify(def.filter) : "",
-                    streamMerge:  def.merge  !== false,
-                });
-            }
-        }
-        actionDefs.value = loaded;
+        const section = (plugin._actions as any).actions ?? {};
+        actionDefs.value = Object.entries(section as Record<string, any>).map(([actionName, def]) => ({
+            _id: uid(),
+            name: actionName,
+            label:    def.label    ?? "",
+            protocol: def.protocol ?? "",
+            method:   def.method   ?? "",
+            topic:       def.topic ?? "",
+            payloadJson: def.payload ? JSON.stringify(def.payload, null, 2) : "{}",
+            inputFields: Object.entries(def.input ?? {}).map(([k, v]: any) => ({
+                key:      k,
+                type:     v.type     ?? "string",
+                required: v.required ?? true,
+                default:  v.default !== undefined ? String(v.default) : undefined,
+            })),
+            exampleJson: def.example ? JSON.stringify(def.example, null, 2) : "{}",
+        }));
     } else {
         actionDefs.value = [];
     }
@@ -258,9 +242,7 @@ function buildProtocolsJson(): Record<string, unknown> | null {
 function buildActionsJson(): Record<string, unknown> | null {
     if (!actionDefs.value.length) return null;
 
-    const result: Record<string, Record<string, unknown>> = {
-        send: {}, request: {}, stream: {},
-    };
+    const actions: Record<string, unknown> = {};
 
     for (const a of actionDefs.value) {
         if (!a.name.trim()) continue;
@@ -270,48 +252,30 @@ function buildActionsJson(): Record<string, unknown> | null {
             label:    a.label || a.name,
         };
         if (a.method) def.method = a.method;
+        if (a.topic.trim()) def.topic = a.topic.trim();
 
-        if (a.category === "send") {
-            if (a.topic.trim()) def.topic = a.topic.trim();
-            try { def.payload = JSON.parse(a.payloadJson); } catch { def.payload = {}; }
-            if (a.inputFields.length) {
-                const inp: Record<string, unknown> = {};
-                for (const f of a.inputFields) {
-                    if (!f.key.trim()) continue;
-                    const fd: Record<string, unknown> = { type: f.type, required: f.required };
-                    if (f.default !== undefined && f.default !== "") fd.default = f.default;
-                    inp[f.key] = fd;
-                }
-                if (Object.keys(inp).length) def.input = inp;
+        try { def.payload = JSON.parse(a.payloadJson); } catch { def.payload = {}; }
+
+        if (a.inputFields.length) {
+            const inp: Record<string, unknown> = {};
+            for (const f of a.inputFields) {
+                if (!f.key.trim()) continue;
+                const fd: Record<string, unknown> = { type: f.type, required: f.required };
+                if (f.default !== undefined && f.default !== "") fd.default = f.default;
+                inp[f.key] = fd;
             }
-            try {
-                const ex = JSON.parse(a.exampleJson);
-                if (Object.keys(ex).length) def.example = ex;
-            } catch { /* skip */ }
+            if (Object.keys(inp).length) def.input = inp;
         }
 
-        if (a.category === "request") {
-            def.input = { path: { type: "string", default: a.inputPathDefault || "/" } };
-        }
+        try {
+            const ex = JSON.parse(a.exampleJson);
+            if (Object.keys(ex).length) def.example = ex;
+        } catch { /* skip */ }
 
-        if (a.category === "stream") {
-            if (a.streamTopic.trim()) def.topic = a.streamTopic.trim();
-            if (a.streamFilter.trim()) {
-                try { def.filter = JSON.parse(a.streamFilter); } catch { /* skip */ }
-            }
-            def.merge   = a.streamMerge;
-            def.emit_as = "websocket";
-        }
-
-        result[a.category][a.name.trim()] = def;
+        actions[a.name.trim()] = def;
     }
 
-    // Drop empty sections
-    for (const k of ["send", "request", "stream"] as const) {
-        if (Object.keys(result[k]).length === 0) delete result[k];
-    }
-
-    return Object.keys(result).length ? result : null;
+    return { actions };
 }
 
 // Validation + Save

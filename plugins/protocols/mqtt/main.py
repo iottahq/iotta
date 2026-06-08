@@ -77,18 +77,43 @@ class MQTTProtocol(BaseProtocol):
 
         topic = payload.get("topic")
         message = payload.get("payload", {})
+        response_topic = payload.get("response_topic")
 
         if not topic:
             return {"success": False, "error": "No topic specified"}
 
         try:
-            result = self._client.publish(
-                topic,
-                json.dumps(message),
-                qos=payload.get("qos", 1),
-            )
-            await asyncio.sleep(0.5)
-            return {"success": result.rc == mqtt.MQTT_ERR_SUCCESS}
+            if response_topic:
+                future: asyncio.Future = asyncio.get_event_loop().create_future()
+
+                def on_response(client, userdata, msg):
+                    if msg.topic == response_topic and not future.done():
+                        try:
+                            data = json.loads(msg.payload.decode())
+                        except Exception:
+                            data = msg.payload.decode()
+                        self._loop.call_soon_threadsafe(future.set_result, data)
+
+                self._client.subscribe(response_topic)
+                self._client.message_callback_add(response_topic, on_response)
+
+                self._client.publish(topic, json.dumps(message), qos=payload.get("qos", 1))
+
+                try:
+                    return await asyncio.wait_for(future, timeout=5.0)
+                except asyncio.TimeoutError:
+                    return {"success": False, "error": "Response timeout"}
+                finally:
+                    self._client.message_callback_remove(response_topic)
+                    self._client.unsubscribe(response_topic)
+            else:
+                result = self._client.publish(
+                    topic,
+                    json.dumps(message),
+                    qos=payload.get("qos", 1),
+                )
+                await asyncio.sleep(0.5)
+                return {"success": result.rc == mqtt.MQTT_ERR_SUCCESS}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

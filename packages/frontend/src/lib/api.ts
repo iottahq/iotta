@@ -237,29 +237,6 @@ const patch = <T>(path: string, body: unknown) =>
   request<T>("PATCH", path, body);
 const del = (path: string) => request<void>("DELETE", path);
 
-function openStream(
-    deviceId: string,
-    action: string,
-    onMessage: (data: unknown) => void,
-    onClose?: () => void,
-    onError?: (e: Event) => void,
-): WebSocket {
-    const token = tokenStore.get();
-    const url = `ws://localhost:8000/devices/${deviceId}/stream/${action}${token ? `?token=${token}` : ""}`;
-    const ws = new WebSocket(url);
-    
-    ws.onmessage = (e) => {
-        try {
-            onMessage(JSON.parse(e.data));
-        } catch {
-            onMessage(e.data);
-        }
-    };
-    if (onClose) ws.onclose = onClose;
-    if (onError) ws.onerror = onError;
-    
-    return ws;
-}
 
 export const api = {
     auth: {
@@ -285,15 +262,11 @@ export const api = {
     },
     
     actions: {
-        send: (
+        execute: (
             deviceId: string,
             action: string,
             body: Record<string, unknown> = {},
-        ) => post<unknown>(`/devices/${deviceId}/send/${action}`, body),
-        request: (deviceId: string, action: string, path?: string) =>
-        get<unknown>(
-            `/devices/${deviceId}/request/${action}${path ? `?path=${encodeURIComponent(path)}` : ""}`,
-        ),
+        ) => post<unknown>(`/devices/${deviceId}/action/${action}`, body),
     },
     
     credentials: {
@@ -372,7 +345,4 @@ export const api = {
         },
     },
     
-    ws: {
-        stream: openStream,
-    },
 } as const;

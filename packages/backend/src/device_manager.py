@@ -2,9 +2,7 @@
 device_manager.py – Creates and mounts a FastAPI sub-app per registered device.
 
 Each device gets its own isolated FastAPI app with:
-- POST /devices/{id}/send/{action}
-- GET  /devices/{id}/request/{action}
-- WS   /devices/{id}/stream/{action}
+- POST /devices/{id}/action/{name}
 - GET  /devices/{id}/ping
 - GET  /devices/{id}/docs
 - GET  /devices/{id}/openapi.json
@@ -16,7 +14,7 @@ Access is enforced per group token.
 import asyncio
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Query, Security, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -47,6 +45,7 @@ def _make_auth_dependency(device_group_id: UUID | None):
         credentials: HTTPAuthorizationCredentials = Security(_sub_app_security),
     ):
         token = credentials.credentials
+
 
         db: Session = SessionLocal()
         try:
@@ -152,11 +151,13 @@ class DeviceConnections:
         return False
 
     async def disconnect_all(self):
-        for protocol_id, protocol in self._connections.items():
+        async def _safe(pid, proto):
             try:
-                await protocol.disconnect()
+                await asyncio.wait_for(proto.disconnect(), timeout=5.0)
             except Exception as e:
-                logger.error(f"Error disconnecting '{protocol_id}': {e}")
+                logger.error(f"Error disconnecting '{pid}': {e}")
+
+        await asyncio.gather(*[_safe(pid, p) for pid, p in list(self._connections.items())])
         self._connections.clear()
 
 
@@ -166,6 +167,7 @@ class DeviceManager:
         self._apps: dict[str, FastAPI] = {}
         self._connections: dict[str, DeviceConnections] = {}
         self._plugin_ids: dict[str, str] = {}
+        self._deleting: set[str] = set()
 
     async def mount_all(self):
         db: Session = SessionLocal()
@@ -181,7 +183,9 @@ class DeviceManager:
     async def _reconnect_loop(self):
         while True:
             await asyncio.sleep(30)
-            for device_id, connections in self._connections.items():
+            for device_id, connections in list(self._connections.items()):
+                if device_id in self._deleting:
+                    continue
                 plugin_id = self._plugin_ids.get(device_id, "device")
                 dlog = get_logger(plugin_id, device_id=device_id)
                 for protocol_id in list(connections._configs.keys()):
@@ -210,6 +214,7 @@ class DeviceManager:
 
     async def unmount(self, device_id: UUID):
         key = str(device_id)
+        self._deleting.add(key)
         plugin_id = self._plugin_ids.get(key, "device")
         dlog = get_logger(plugin_id, device_id=key)
         if key in self._connections:
@@ -225,6 +230,7 @@ class DeviceManager:
             del self._apps[key]
             self._plugin_ids.pop(key, None)
             dlog.info("Unmounted")
+        self._deleting.discard(key)
 
     async def _mount_device(self, device: Device, db: Session):
         device_id = str(device.id)
@@ -288,18 +294,8 @@ class DeviceManager:
             version=meta.get("version", "1.0.0"),
             dependencies=[Depends(auth_dep)],
         )
-        for action_name, action_def in actions.get("send", {}).items():
-            self._register_send(
-                sub_app, action_name, action_def, credentials, connections
-            )
-        for action_name, action_def in actions.get("request", {}).items():
-            self._register_request(
-                sub_app, action_name, action_def, credentials, connections
-            )
-        for action_name, action_def in actions.get("stream", {}).items():
-            self._register_stream(
-                sub_app, action_name, action_def, credentials, connections
-            )
+        for action_name, action_def in actions.get("actions", {}).items():
+            self._register_action(sub_app, action_name, action_def, credentials, connections)
         self._register_ping(sub_app, connections)
         return sub_app
 
@@ -322,7 +318,7 @@ class DeviceManager:
                 all_ok = False
             return {"online": all_ok, "protocols": results}
 
-    def _register_send(self, app, name, action, credentials, connections):
+    def _register_action(self, app, name, action, credentials, connections):
         from fastapi import File, Form, UploadFile
 
         label = action.get("label", name)
@@ -332,16 +328,13 @@ class DeviceManager:
 
         if has_file_upload:
 
-            @app.post(f"/send/{name}", summary=label, tags=["send"])
-            async def send_action(file: UploadFile = File(...), path: str = Form(...)):
+            @app.post(f"/action/{name}", summary=label, tags=["actions"])
+            async def action_handler(file: UploadFile = File(...), path: str = Form(...)):
                 protocol_id = action.get("protocol")
                 protocol = connections.get(protocol_id)
                 if not protocol:
                     return JSONResponse(
-                        {
-                            "success": False,
-                            "error": f"Protocol '{protocol_id}' not connected",
-                        },
+                        {"success": False, "error": f"Protocol '{protocol_id}' not connected"},
                         status_code=503,
                     )
                 if not protocol.is_connected:
@@ -353,27 +346,25 @@ class DeviceManager:
                 return await protocol.execute_action(
                     action.get("method", name), {"path": path, "data": data}
                 )
+
         else:
 
             @app.post(
-                f"/send/{name}",
+                f"/action/{name}",
                 summary=label,
-                tags=["send"],
+                tags=["actions"],
                 openapi_extra={
                     "requestBody": {
                         "content": {"application/json": {"example": example}}
                     }
                 },
             )
-            async def send_action(body: dict = {}):
+            async def action_handler(body: dict = {}):
                 protocol_id = action.get("protocol")
                 protocol = connections.get(protocol_id)
                 if not protocol:
                     return JSONResponse(
-                        {
-                            "success": False,
-                            "error": f"Protocol '{protocol_id}' not connected",
-                        },
+                        {"success": False, "error": f"Protocol '{protocol_id}' not connected"},
                         status_code=503,
                     )
                 if not protocol.is_connected:
@@ -384,72 +375,16 @@ class DeviceManager:
                 resolved_payload = _resolve(
                     action.get("payload", {}), {**credentials, **body}
                 )
-                return await protocol.execute_action(
-                    action.get("method", name),
-                    {
-                        "topic": _resolve_str(action.get("topic", ""), credentials),
-                        "payload": resolved_payload,
-                    },
-                )
+                exec_payload = {
+                    "topic": _resolve_str(action.get("topic", ""), credentials),
+                    "payload": resolved_payload,
+                    "path": body.get("path", action.get("input", {}).get("path", {}).get("default", "/")),
+                }
+                if action.get("response_topic"):
+                    exec_payload["response_topic"] = _resolve_str(action["response_topic"], credentials)
+                return await protocol.execute_action(action.get("method", name), exec_payload)
 
-        send_action.__name__ = f"send_{name}"
-
-    def _register_request(self, app, name, action, credentials, connections):
-        label = action.get("label", name)
-        default_path = action.get("input", {}).get("path", {}).get("default")
-
-        @app.get(f"/request/{name}", summary=label, tags=["request"])
-        async def request_action(path: str = Query(default=None)):
-            protocol_id = action.get("protocol")
-            if protocol_id == "camera":
-                return JSONResponse(
-                    {"success": False, "error": "Camera not yet implemented"},
-                    status_code=501,
-                )
-            protocol = connections.get(protocol_id)
-            if not protocol:
-                return JSONResponse(
-                    {
-                        "success": False,
-                        "error": f"Protocol '{protocol_id}' not connected",
-                    },
-                    status_code=503,
-                )
-            return await protocol.execute_action(
-                action.get("method", name), {"path": path or default_path or "/"}
-            )
-
-        request_action.__name__ = f"request_{name}"
-
-    def _register_stream(self, app, name, action, credentials, connections):
-        @app.websocket(f"/stream/{name}")
-        async def stream_action(websocket: WebSocket):
-            await websocket.accept()
-            protocol_id = action.get("protocol")
-            protocol = connections.get(protocol_id)
-            if not protocol:
-                await websocket.close(code=1008)
-                return
-            try:
-
-                async def on_message(data: dict):
-                    try:
-                        await websocket.send_json(data)
-                    except Exception:
-                        pass
-
-                await protocol.subscribe(on_message)
-                while True:
-                    try:
-                        await asyncio.wait_for(websocket.receive_text(), timeout=30)
-                    except asyncio.TimeoutError:
-                        await websocket.send_json({"ping": True})
-                    except WebSocketDisconnect:
-                        break
-            finally:
-                await protocol.subscribe(lambda _: None)
-
-        stream_action.__name__ = f"stream_{name}"
+        action_handler.__name__ = f"action_{name}"
 
 
 # Helpers

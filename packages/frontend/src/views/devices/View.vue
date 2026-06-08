@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { api, type Device, type Credential, type Group, type PluginMeta, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -36,9 +36,6 @@ const actionBodies = ref<Record<string, string>>({});
 const actionResults = ref<Record<string, { ok: boolean; data: unknown } | null>>({});
 const actionRunning = ref<Record<string, boolean>>({});
 
-const streamSockets = ref<Record<string, WebSocket>>({});
-const streamMessages = ref<Record<string, unknown[]>>({});
-const streamConnected = ref<Record<string, boolean>>({});
 
 // Load
 
@@ -61,22 +58,12 @@ onMounted(async () => {
        credential.value = cred;
        group.value = grp;
 
-       // Support both new split format (_actions) and legacy (_config.actions)
        const detail = pluginDetail as any;
-       if (detail._actions) {
-           actions.value = detail._actions;
-       } else if (detail._config?.actions) {
-           actions.value = detail._config.actions;
-       } else {
-           actions.value = null;
-       }
+       actions.value = detail._actions?.actions ?? detail._config?.actions ?? null;
 
        // Pre-fill bodies from examples
-       for (const [name, def] of Object.entries<any>(actions.value?.send ?? {})) {
+       for (const [name, def] of Object.entries<any>(actions.value ?? {})) {
            actionBodies.value[name] = JSON.stringify(def.example ?? {}, null, 2);
-       }
-       for (const [name, def] of Object.entries<any>(actions.value?.request ?? {})) {
-           actionBodies.value[`req_${name}`] = def.input?.path?.default ?? "/";
        }
 
        const first = allActions.value[0];
@@ -90,9 +77,6 @@ onMounted(async () => {
    }
 });
 
-onUnmounted(() => {
-   for (const ws of Object.values(streamSockets.value)) ws.close();
-});
 
 // Ping
 
@@ -112,13 +96,13 @@ async function ping() {
 
 // Actions
 
-async function runSend(name: string) {
+async function runAction(name: string) {
    actionRunning.value[name] = true;
    actionResults.value[name] = null;
    try {
        let body: Record<string, unknown> = {};
        try { body = JSON.parse(actionBodies.value[name] ?? "{}"); } catch { /* ignore */ }
-       const result = await api.actions.send(deviceId, name, body);
+       const result = await api.actions.execute(deviceId, name, body);
        actionResults.value[name] = { ok: true, data: result };
    } catch (e) {
        actionResults.value[name] = { ok: false, data: e instanceof ApiError ? e.detail : String(e) };
@@ -127,86 +111,24 @@ async function runSend(name: string) {
    }
 }
 
-async function runRequest(name: string) {
-   const key = `req_${name}`;
-   actionRunning.value[key] = true;
-   actionResults.value[key] = null;
-   try {
-       const path = actionBodies.value[key] || undefined;
-       const result = await api.actions.request(deviceId, name, path);
-       actionResults.value[key] = { ok: true, data: result };
-   } catch (e) {
-       actionResults.value[key] = { ok: false, data: e instanceof ApiError ? e.detail : String(e) };
-   } finally {
-       actionRunning.value[key] = false;
-   }
-}
-
-function toggleStream(name: string) {
-   if (streamConnected.value[name]) {
-       streamSockets.value[name]?.close();
-       delete streamSockets.value[name];
-       streamConnected.value[name] = false;
-   } else {
-       streamMessages.value[name] = [];
-       const ws = api.ws.stream(
-           deviceId,
-           name,
-           (data) => {
-               streamMessages.value[name] = [data, ...(streamMessages.value[name] ?? [])].slice(0, 50);
-           },
-           () => { streamConnected.value[name] = false; },
-       );
-       streamSockets.value[name] = ws;
-       streamConnected.value[name] = true;
-   }
-}
-
 // Computed
 
-const allActions = computed(() => {
-   const act = actions.value ?? {};
-   return [
-       ...Object.entries<any>(act.send ?? {}).map(([name, def]) => ({
-           name, label: def.label ?? name, category: "send" as const,
-       })),
-       ...Object.entries<any>(act.request ?? {}).map(([name, def]) => ({
-           name: `req_${name}`, label: def.label ?? name, category: "request" as const,
-       })),
-       ...Object.entries<any>(act.stream ?? {}).map(([name, def]) => ({
-           name, label: def.label ?? name, category: "stream" as const,
-       })),
-   ];
-});
-
-const selectedEntry = computed(() =>
-   allActions.value.find((a) => a.name === selectedAction.value) ?? null,
+const allActions = computed(() =>
+   Object.entries<any>(actions.value ?? {}).map(([name, def]) => ({
+       name, label: def.label ?? name,
+   }))
 );
 
-const selectedDef = computed(() => {
-   if (!selectedEntry.value) return null;
-   const act = actions.value ?? {};
-   const { name, category } = selectedEntry.value;
-   if (category === "send") return act.send?.[name] ?? null;
-   if (category === "request") return act.request?.[name.replace(/^req_/, "")] ?? null;
-   if (category === "stream") return act.stream?.[name] ?? null;
-   return null;
-});
+const selectedDef = computed(() =>
+   selectedAction.value ? (actions.value ?? {})[selectedAction.value] ?? null : null
+);
 
 const playgroundBody = computed(() => actionBodies.value[selectedAction.value ?? ""] ?? "");
 const playgroundRunning = computed(() => actionRunning.value[selectedAction.value ?? ""] ?? false);
 const playgroundResult = computed(() => actionResults.value[selectedAction.value ?? ""] ?? null);
-const playgroundStreamConnected = computed(() => streamConnected.value[selectedAction.value ?? ""] ?? false);
-const playgroundStreamMessages = computed(() => streamMessages.value[selectedAction.value ?? ""] ?? []);
 
 function handleRun() {
-   if (!selectedEntry.value) return;
-   if (selectedEntry.value.category === "send") runSend(selectedEntry.value.name);
-   if (selectedEntry.value.category === "request") runRequest(selectedEntry.value.name.replace(/^req_/, ""));
-}
-
-function handleToggleStream() {
-   if (selectedEntry.value?.category === "stream") toggleStream(selectedEntry.value.name);
+   if (selectedAction.value) runAction(selectedAction.value);
 }
 
 const docsUrl = computed(() => `http://localhost:8000/devices/${deviceId}/docs`);
@@ -275,22 +197,17 @@ const pluginRows = computed(() => pluginMeta.value ? [
            <ActionSidebar
                :actions="allActions"
                :selected="selectedAction"
-               :connected-streams="streamConnected"
                @select="selectedAction = $event"
            />
            <div class="flex-1 min-w-0 overflow-hidden">
                <ActionPlayground
-                   :action-name="selectedEntry?.name ?? null"
+                   :action-name="selectedAction"
                    :action-def="selectedDef"
-                   :category="selectedEntry?.category ?? null"
                    :body="playgroundBody"
                    :running="playgroundRunning"
                    :result="playgroundResult"
-                   :stream-connected="playgroundStreamConnected"
-                   :stream-messages="playgroundStreamMessages"
                    @update:body="actionBodies[selectedAction!] = $event"
                    @run="handleRun"
-                   @toggle-stream="handleToggleStream"
                />
            </div>
        </div>
