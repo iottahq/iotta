@@ -79,6 +79,30 @@ class MQTTProtocol(BaseProtocol):
         message = payload.get("payload", {})
         response_topic = payload.get("response_topic")
 
+        # subscribe_once: listen on topic, return first message (retained = immediate)
+        if action == "subscribe_once":
+            if not topic:
+                return {"success": False, "error": "No topic specified"}
+            future: asyncio.Future = asyncio.get_event_loop().create_future()
+
+            def on_message(client, userdata, msg):
+                if not future.done():
+                    try:
+                        data = json.loads(msg.payload.decode())
+                    except Exception:
+                        data = msg.payload.decode()
+                    self._loop.call_soon_threadsafe(future.set_result, data)
+
+            self._client.subscribe(topic)
+            self._client.message_callback_add(topic, on_message)
+            try:
+                return await asyncio.wait_for(future, timeout=5.0)
+            except asyncio.TimeoutError:
+                return {"success": False, "error": "No message received (timeout)"}
+            finally:
+                self._client.message_callback_remove(topic)
+                self._client.unsubscribe(topic)
+
         if not topic:
             return {"success": False, "error": "No topic specified"}
 

@@ -328,7 +328,6 @@ class DeviceManager:
 
         if has_file_upload:
 
-            @app.post(f"/action/{name}", summary=label, tags=["actions"])
             async def action_handler(file: UploadFile = File(...), path: str = Form(...)):
                 protocol_id = action.get("protocol")
                 protocol = connections.get(protocol_id)
@@ -347,18 +346,11 @@ class DeviceManager:
                     action.get("method", name), {"path": path, "data": data}
                 )
 
+            action_handler.__name__ = f"action_{name}"
+            app.post(f"/action/{name}", summary=label, tags=["actions"])(action_handler)
+
         else:
 
-            @app.post(
-                f"/action/{name}",
-                summary=label,
-                tags=["actions"],
-                openapi_extra={
-                    "requestBody": {
-                        "content": {"application/json": {"example": example}}
-                    }
-                },
-            )
             async def action_handler(body: dict = {}):
                 protocol_id = action.get("protocol")
                 protocol = connections.get(protocol_id)
@@ -384,7 +376,13 @@ class DeviceManager:
                     exec_payload["response_topic"] = _resolve_str(action["response_topic"], credentials)
                 return await protocol.execute_action(action.get("method", name), exec_payload)
 
-        action_handler.__name__ = f"action_{name}"
+            action_handler.__name__ = f"action_{name}"
+            app.post(
+                f"/action/{name}",
+                summary=label,
+                tags=["actions"],
+                openapi_extra={"requestBody": {"content": {"application/json": {"example": example}}}},
+            )(action_handler)
 
 
 # Helpers
