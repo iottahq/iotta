@@ -56,16 +56,45 @@ export interface Group {
     name: string;
 }
 
-export interface GroupWithToken extends Group {
-    token: string;
-}
-
 export interface GroupCreate {
     name: string;
 }
 
 export interface GroupUpdate {
     name?: string;
+}
+
+export interface ApiTokenDevice {
+    device_id: string;
+    allowed_actions: string[];
+}
+
+export interface ApiToken {
+    id: string;
+    name: string;
+    group_id: string;
+    expires_at: string | null;
+    created_at: string;
+    last_used_at: string | null;
+    devices: ApiTokenDevice[];
+}
+
+export interface ApiTokenWithValue extends ApiToken {
+    token: string;
+}
+
+export interface TokenCreate {
+    name: string;
+    expires_at: string | null;
+}
+
+export interface TokenDeviceAdd {
+    device_id: string;
+    allowed_actions: string[];
+}
+
+export interface TokenDeviceUpdate {
+    allowed_actions: string[];
 }
 
 export interface PluginMeta {
@@ -281,12 +310,26 @@ export const api = {
     groups: {
         list: () => get<Group[]>("/groups/"),
         get: (id: string) => get<Group>(`/groups/${id}`),
-        getToken: (id: string) => get<GroupWithToken>(`/groups/${id}/token`),
-        create: (body: GroupCreate) => post<GroupWithToken>("/groups/", body),
+        create: (body: GroupCreate) => post<Group>("/groups/", body),
         update: (id: string, b: GroupUpdate) => patch<Group>(`/groups/${id}`, b),
-        rotateToken: (id: string) =>
-        post<GroupWithToken>(`/groups/${id}/rotate-token`),
         delete: (id: string) => del(`/groups/${id}`),
+    },
+
+    tokens: {
+        list: (groupId: string) =>
+            get<ApiToken[]>(`/groups/${groupId}/tokens`),
+        create: (groupId: string, body: TokenCreate) =>
+            post<ApiTokenWithValue>(`/groups/${groupId}/tokens`, body),
+        delete: (groupId: string, tokenId: string) =>
+            del(`/groups/${groupId}/tokens/${tokenId}`),
+        rotate: (groupId: string, tokenId: string) =>
+            post<ApiTokenWithValue>(`/groups/${groupId}/tokens/${tokenId}/rotate`),
+        addDevice: (groupId: string, tokenId: string, body: TokenDeviceAdd) =>
+            post<ApiTokenDevice>(`/groups/${groupId}/tokens/${tokenId}/devices`, body),
+        updateDevice: (groupId: string, tokenId: string, deviceId: string, body: TokenDeviceUpdate) =>
+            request<ApiTokenDevice>("PUT", `/groups/${groupId}/tokens/${tokenId}/devices/${deviceId}`, body),
+        removeDevice: (groupId: string, tokenId: string, deviceId: string) =>
+            del(`/groups/${groupId}/tokens/${tokenId}/devices/${deviceId}`),
     },
     
     plugins: {

@@ -1,8 +1,8 @@
 """
-models/group.py – Device group with an associated API token.
+models/group.py – Device group.
 
-The token is stored encrypted using IOTTA_SECRET_KEY.
-It is returned in plaintext only via the API (GET /groups/{id}/token).
+Groups bundle devices together. Access is controlled via scoped tokens
+(see models/token.py), not a single group-level token.
 """
 
 from datetime import datetime, timezone
@@ -20,7 +20,7 @@ class Group(Base):
 
     id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name       = Column(String, nullable=False)
-    token      = Column(String, nullable=False)  # encrypted
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     devices = relationship("Device", back_populates="group")
+    tokens  = relationship("Token", back_populates="group", cascade="all, delete-orphan")

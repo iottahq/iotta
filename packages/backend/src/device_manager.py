@@ -8,45 +8,51 @@ Each device gets its own isolated FastAPI app with:
 - GET  /devices/{id}/openapi.json
 
 Protocol connections are persistent per device.
-Access is enforced per group token.
+Access is enforced via scoped tokens (or JWT/admin for full access).
 """
 
 import asyncio
+import hashlib
+import os
+import secrets
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Security
+from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
-from src.crypto import decrypt
+
 from src.database import SessionLocal
 from src.logging import get_logger
 from src.models.credential import Credential
 from src.models.device import Device
-from src.models.group import Group
-from src.permissions import require_device_access
+from src.models.token import TOKEN_PREFIX, Token, TokenDevice
 from src.plugins.base_protocol import BaseProtocol
 from src.plugins.loader import plugin_loader
 
 logger = get_logger("core")
 
 _sub_app_security = HTTPBearer()
+_ADMIN_TOKEN = os.getenv("IOTTA_ADMIN_TOKEN", "")
 
 
-def _make_auth_dependency(device_group_id: UUID | None):
-    import os
-    import secrets
+def _make_auth_dependency(device_id: UUID, device_group_id: UUID | None):
+    """
+    Returns a FastAPI dependency that authenticates requests to a device sub-app.
 
-    from src.crypto import decrypt
-
-    ADMIN_TOKEN = os.getenv("IOTTA_ADMIN_TOKEN", "")
+    - JWT / admin token → full access, request.state.token_device = None
+    - Scoped token      → checks group, device, expiry; sets request.state.token_device
+    - Action-level check happens inside each action handler (uses request.state.token_device)
+    """
 
     async def check_auth(
+        request: Request,
         credentials: HTTPAuthorizationCredentials = Security(_sub_app_security),
     ):
         token = credentials.credentials
 
-
+        # 1. JWT
         db: Session = SessionLocal()
         try:
             from src.models.user import User
@@ -56,55 +62,80 @@ def _make_auth_dependency(device_group_id: UUID | None):
             if user_id:
                 user = db.query(User).filter(User.id == user_id).first()
                 if user:
+                    request.state.token_device = None
                     return
         except Exception:
             pass
         finally:
             db.close()
 
-        if ADMIN_TOKEN and secrets.compare_digest(token.encode(), ADMIN_TOKEN.encode()):
+        # 2. Static admin token
+        if _ADMIN_TOKEN and secrets.compare_digest(token.encode(), _ADMIN_TOKEN.encode()):
+            request.state.token_device = None
             return
 
+        # 3. Scoped token
+        if not token.startswith(TOKEN_PREFIX):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
         db: Session = SessionLocal()
         try:
-            groups = db.query(Group).all()
-            for group in groups:
-                try:
-                    decrypted = decrypt(group.token)
-                except Exception:
-                    continue
-                if secrets.compare_digest(token.encode(), decrypted.encode()):
-                    require_device_access(device_group_id, group)
-                    return
+            tok = db.query(Token).filter(Token.token_hash == token_hash).first()
+            if not tok:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            if tok.expires_at:
+                expiry = tok.expires_at
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                if expiry < datetime.now(timezone.utc):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token has expired",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+            if device_group_id is None or tok.group_id != device_group_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Token does not belong to this device's group",
+                )
+
+            token_device = db.query(TokenDevice).filter(
+                TokenDevice.token_id == tok.id,
+                TokenDevice.device_id == device_id,
+            ).first()
+            if not token_device:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Token does not have access to this device",
+                )
+
+            request.state.token_device = token_device
+
+            tok.last_used_at = datetime.now(timezone.utc)
+            db.commit()
         finally:
             db.close()
-
-        from fastapi import HTTPException, status
-
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
     return check_auth
 
 
 def _resolve_plugin_config(plugin: dict) -> tuple[dict, dict]:
-    """
-    Returns (protocols_config, actions) from a device plugin.
-
-    Supports both the new split format (_protocols / _actions)
-    and the legacy single-file format (_config).
-    """
-    # New split format
     if "_protocols" in plugin or "_actions" in plugin:
         return (
             plugin.get("_protocols") or {},
             plugin.get("_actions") or {},
         )
-
-    # Legacy single-file format
     config = plugin.get("_config") or {}
     return (
         config.get("protocols") or {},
@@ -194,9 +225,7 @@ class DeviceManager:
                         not (await protocol.ping()).get("ok") if protocol else True
                     )
                     if is_down:
-                        dlog.warning(
-                            f"Protocol '{protocol_id}' is down – reconnecting..."
-                        )
+                        dlog.warning(f"Protocol '{protocol_id}' is down – reconnecting...")
                         ok = await connections.reconnect(protocol_id)
                         if ok:
                             dlog.info(f"Protocol '{protocol_id}' reconnected")
@@ -256,6 +285,7 @@ class DeviceManager:
             return
 
         import json
+        from src.crypto import decrypt
 
         cred_data = json.loads(decrypt(credential.data))
 
@@ -273,7 +303,7 @@ class DeviceManager:
         self._connections[device_id] = connections
         self._plugin_ids[device_id] = plugin_id
 
-        auth_dep = _make_auth_dependency(device.group_id)
+        auth_dep = _make_auth_dependency(device.id, device.group_id)
 
         sub_app = self._build_sub_app(
             device, actions, cred_data, connections, plugin, auth_dep
@@ -284,9 +314,7 @@ class DeviceManager:
 
         dlog.info(f"Mounted: {device.name} at {mount_path}")
 
-    def _build_sub_app(
-        self, device, actions, credentials, connections, plugin, auth_dep
-    ) -> FastAPI:
+    def _build_sub_app(self, device, actions, credentials, connections, plugin, auth_dep) -> FastAPI:
         meta = {k: v for k, v in plugin.items() if not k.startswith("_")}
         sub_app = FastAPI(
             title=device.name,
@@ -328,7 +356,12 @@ class DeviceManager:
 
         if has_file_upload:
 
-            async def action_handler(file: UploadFile = File(...), path: str = Form(...)):
+            async def action_handler(
+                request: Request,
+                file: UploadFile = File(...),
+                path: str = Form(...),
+            ):
+                _check_action_permission(request, name)
                 protocol_id = action.get("protocol")
                 protocol = connections.get(protocol_id)
                 if not protocol:
@@ -351,7 +384,8 @@ class DeviceManager:
 
         else:
 
-            async def action_handler(body: dict = {}):
+            async def action_handler(request: Request, body: dict = {}):
+                _check_action_permission(request, name)
                 protocol_id = action.get("protocol")
                 protocol = connections.get(protocol_id)
                 if not protocol:
@@ -385,7 +419,20 @@ class DeviceManager:
             )(action_handler)
 
 
-# Helpers
+def _check_action_permission(request: Request, action_name: str) -> None:
+    """Enforce action-level permissions for scoped tokens. No-op for admin/JWT."""
+    token_device: TokenDevice | None = getattr(request.state, "token_device", None)
+    if token_device is None:
+        return
+    allowed: list[str] = token_device.allowed_actions or []
+    if "*" not in allowed and action_name not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Action '{action_name}' is not permitted for this token",
+        )
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def _resolve_str(value: str, context: dict) -> str:

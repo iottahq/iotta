@@ -18,6 +18,7 @@ from src.routers.groups import router as groups_router
 from src.routers.plugin_editor import router as plugin_editor_router
 from src.routers.plugin_registry import router as plugin_registry_router
 from src.routers.plugins import router as plugins_router
+from src.routers.tokens import router as tokens_router
 from src.version import IOTTA_VERSION
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -95,6 +96,7 @@ app.include_router(auth_router)
 
 # Protected routers
 app.include_router(groups_router, dependencies=[Depends(require_auth)])
+app.include_router(tokens_router, dependencies=[Depends(require_auth)])
 app.include_router(plugins_router, dependencies=[Depends(require_auth)])
 app.include_router(plugin_editor_router, dependencies=[Depends(require_auth)])
 app.include_router(plugin_registry_router, dependencies=[Depends(require_auth)])

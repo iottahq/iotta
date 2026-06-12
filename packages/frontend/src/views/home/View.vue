@@ -5,9 +5,12 @@ import { useRouter } from "vue-router";
 import { api, type Device, type Group, ApiError, fetchAssetBlobUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { RiAlertLine } from "@remixicon/vue";
 import NewGroupDialog from "./group/NewDialog.vue";
 import EditGroupDialog from "./group/EditDialog.vue";
 import DeleteGroupDialog from "./group/DeleteDialog.vue";
+import TokenSheet from "./group/TokenSheet.vue";
 import NewDeviceDialog from "./device/NewDialog.vue";
 import EditDeviceDialog from "./device/EditDialog.vue";
 import NewCredentialDialog from "@/views/credentials/NewDialog.vue";
@@ -27,10 +30,12 @@ import {
     RiErrorWarningLine,
     RiPencilLine,
     RiPlugLine,
+    RiShieldLine,
     RiPrinterLine,
     RiSearchLine,
     RiServerLine,
 } from "@remixicon/vue";
+
 import type { Component } from "vue";
 
 const router = useRouter();
@@ -93,14 +98,13 @@ const credentialError = ref<string | null>(null);
 const editGroup = ref<Group | null>(null);
 const editGroupName = ref("");
 const savingGroupName = ref(false);
-const groupToken = ref<string | null>(null);
-const loadingToken = ref(false);
-const rotatingToken = ref(false);
-const tokenCopied = ref(false);
 const deletingGroup = ref(false);
 const deleteGroupTarget = ref<Group | null>(null);
 const editGroupError = ref<string | null>(null);
 const confirmDeleteGroup = ref(false);
+const showTokenSheet = ref(false);
+const tokenSheetGroup = ref<Group | null>(null);
+const coveredDeviceIds = ref<Set<string>>(new Set());
 
 const pluginIconMap: Record<string, Component> = {
     "bambu-lab-a1": RiPrinterLine,
@@ -143,11 +147,25 @@ async function load() {
         pingAll();
         const uniquePluginIds = [...new Set(devList.map((d) => d.plugin_id))];
         loadPluginIcons(uniquePluginIds);
+        loadCoveredDevices(grpList.map((g) => g.id));
     } catch (e) {
         error.value = e instanceof ApiError ? e.detail : "Failed to load";
     } finally {
         loading.value = false;
     }
+}
+
+async function loadCoveredDevices(groupIds: string[]) {
+    const results = await Promise.allSettled(groupIds.map((id) => api.tokens.list(id)));
+    const ids = new Set<string>();
+    for (const r of results) {
+        if (r.status === "fulfilled") {
+            for (const token of r.value) {
+                for (const td of token.devices) ids.add(td.device_id);
+            }
+        }
+    }
+    coveredDeviceIds.value = ids;
 }
 
 function buildSections() {
@@ -234,6 +252,7 @@ function onGroupContextMenu(e: MouseEvent, section: GroupSection) {
         x: e.clientX, y: e.clientY,
         items: [
             { label: "Edit", icon: RiPencilLine, action: () => openEditGroup(group) },
+            { label: "Tokens", icon: RiShieldLine, action: () => { tokenSheetGroup.value = group; showTokenSheet.value = true; } },
             { label: "", separator: true, action: () => {} },
             { label: "Delete", icon: RiDeleteBinLine, variant: "destructive", action: () => { deleteGroupTarget.value = group; } },
         ],
@@ -276,7 +295,7 @@ async function createGroup() {
     groupError.value = null;
     try {
         const g = await api.groups.create({ name: newGroupName.value.trim() });
-        groups.value.push(g);
+        groups.value.push({ id: g.id, name: g.name });
         buildSections();
         showNewGroup.value = false;
         newGroupName.value = "";
@@ -293,7 +312,7 @@ async function createGroupInline(name: string) {
     createGroupInlineError.value = null;
     try {
         const g = await api.groups.create({ name });
-        groups.value.push(g);
+        groups.value.push({ id: g.id, name: g.name });
         buildSections();
         newDeviceTargetGroup.value = g.id;
     } catch (e) {
@@ -329,20 +348,10 @@ async function createCredential(name: string, data: Record<string, string>) {
     }
 }
 
-async function openEditGroup(group: Group) {
+function openEditGroup(group: Group) {
     editGroup.value = group;
     editGroupName.value = group.name;
-    groupToken.value = null;
     editGroupError.value = null;
-    loadingToken.value = true;
-    try {
-        const res = await api.groups.getToken(group.id);
-        groupToken.value = res.token;
-    } catch {
-        groupToken.value = null;
-    } finally {
-        loadingToken.value = false;
-    }
 }
 
 function openEditDevice(device: DeviceWithStatus) {
@@ -376,26 +385,6 @@ async function saveGroupName() {
     } finally {
         savingGroupName.value = false;
     }
-}
-
-async function rotateToken() {
-    if (!editGroup.value) return;
-    rotatingToken.value = true;
-    try {
-        const res = await api.groups.rotateToken(editGroup.value.id);
-        groupToken.value = res.token;
-    } catch (e) {
-        editGroupError.value = e instanceof ApiError ? e.detail : "Failed";
-    } finally {
-        rotatingToken.value = false;
-    }
-}
-
-async function copyToken() {
-    if (!groupToken.value) return;
-    await navigator.clipboard.writeText(groupToken.value);
-    tokenCopied.value = true;
-    setTimeout(() => (tokenCopied.value = false), 2000);
 }
 
 async function deleteGroup() {
@@ -604,9 +593,21 @@ function isDragTarget(s: GroupSection) {
                                 </div>
                                 <span class="absolute top-2 right-2 block size-2 rounded-full" :class="device.online === null ? 'bg-muted-foreground/30 animate-pulse' : device.online ? 'bg-emerald-500' : 'bg-zinc-400'" />
                             </div>
-                            <div v-if="viewMode === 'grid'" class="flex flex-col gap-0.5 px-3 py-2.5">
-                                <span class="text-xs font-semibold text-foreground truncate">{{ device.name }}</span>
-                                <span class="text-[10px] text-muted-foreground font-mono truncate">{{ device.plugin_id }}</span>
+                            <div v-if="viewMode === 'grid'" class="flex items-center gap-1.5 px-3 py-2.5">
+                                <div class="flex flex-col gap-0.5 flex-1 min-w-0">
+                                    <span class="text-xs font-semibold text-foreground truncate">{{ device.name }}</span>
+                                    <span class="text-[10px] text-muted-foreground font-mono truncate">{{ device.plugin_id }}</span>
+                                </div>
+                                <TooltipProvider v-if="!coveredDeviceIds.has(device.id)" :delay-duration="100">
+                                    <Tooltip>
+                                        <TooltipTrigger as-child>
+                                            <RiAlertLine class="size-3.5 text-amber-500 shrink-0" />
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                            <p class="text-xs">No token assigned — this device is not accessible via API</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
                             </div>
 
                             <img v-if="viewMode === 'list' && pluginBlobIcons.get(device.plugin_id)" :src="pluginBlobIcons.get(device.plugin_id)" class="size-4 object-contain shrink-0" />
@@ -616,6 +617,16 @@ function isDragTarget(s: GroupSection) {
                                 <span class="text-[10px] text-muted-foreground font-mono truncate hidden sm:block">{{ device.plugin_id }}</span>
                             </div>
                             <div v-if="viewMode === 'list'" class="flex items-center gap-2 shrink-0">
+                                <TooltipProvider v-if="!coveredDeviceIds.has(device.id)" :delay-duration="100">
+                                    <Tooltip>
+                                        <TooltipTrigger as-child>
+                                            <RiAlertLine class="size-3.5 text-amber-500" />
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                            <p class="text-xs">No token assigned — this device is not accessible via API</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
                                 <span class="block size-1.5 rounded-full" :class="device.online === null ? 'bg-muted-foreground/30 animate-pulse' : device.online ? 'bg-emerald-500' : 'bg-zinc-400'" />
                                 <div class="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground cursor-grab">
                                     <RiDraggable class="size-3.5" />
@@ -736,17 +747,19 @@ function isDragTarget(s: GroupSection) {
         :group="editGroup"
         :name="editGroupName"
         :saving-name="savingGroupName"
-        :token="groupToken"
-        :loading-token="loadingToken"
-        :rotating-token="rotatingToken"
-        :token-copied="tokenCopied"
         :error="editGroupError"
         @update:name="editGroupName = $event"
         @save-name="saveGroupName"
-        @rotate-token="rotateToken"
-        @copy-token="copyToken"
+        @manage-tokens="tokenSheetGroup = editGroup; showTokenSheet = true"
         @close="closeEditGroup"
         @delete="confirmDeleteGroup = true"
+    />
+
+    <TokenSheet
+        :group-id="showTokenSheet ? tokenSheetGroup?.id ?? null : null"
+        :group-name="tokenSheetGroup?.name ?? ''"
+        :devices="devices.filter((d) => d.group_id === tokenSheetGroup?.id)"
+        @close="showTokenSheet = false; tokenSheetGroup = null; loadCoveredDevices(groups.map(g => g.id))"
     />
 
     <DeleteGroupDialog
