@@ -25,9 +25,6 @@ import {
     RiLayoutLeftLine,
     RiLayoutRightLine,
     RiHome5Line,
-    RiPrinterLine,
-    RiSignalWifiLine,
-    RiServerLine,
     RiPlugLine,
     RiBarChartLine,
     RiQuestionLine,
@@ -48,18 +45,11 @@ const isCollapsed = () => state.value === "collapsed";
 const showSettingsMenu = ref(false);
 
 const iconMap: Record<string, Component> = {
-    RiPrinterLine,
-    RiSignalWifiLine,
-    RiServerLine,
     RiPlugLine,
     RiBarChartLine,
     RiQuestionLine,
     RiSettings3Line,
 };
-
-const devices = [
-    { id: "1", name: "Demo", icon: "RiPrinterLine", online: true },
-];
 
 const footerItems = [
     { label: "Plugins", icon: "RiPlugLine", route: "/plugins" },
@@ -171,44 +161,6 @@ const isSettingsActive = () =>
                         <SidebarMenuButton v-else :is-active="route.path === '/'" @click="navigate('/')">
                             <RiHome5Line class="size-4" />
                             <span>Home</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
-                </SidebarMenu>
-
-                <SidebarSeparator class="my-2 mx-0" />
-
-                <SidebarMenu>
-                    <SidebarMenuItem v-for="device in devices" :key="device.id">
-                        <Tooltip v-if="isCollapsed()">
-                            <TooltipTrigger as-child>
-                                <SidebarMenuButton
-                                    :is-active="route.path === `/devices/${device.id}`"
-                                    @click="navigate(`/devices/${device.id}`)"
-                                    :aria-label="device.name"
-                                >
-                                    <span class="relative inline-flex">
-                                        <component :is="iconMap[device.icon]" class="size-4" />
-                                        <span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full" :class="device.online ? 'bg-green-500' : 'bg-zinc-400'" />
-                                    </span>
-                                    <span>{{ device.name }}</span>
-                                </SidebarMenuButton>
-                            </TooltipTrigger>
-                            <TooltipContent side="right">
-                                {{ device.name }}
-                                <span class="ml-1 text-xs" :class="device.online ? 'text-green-400' : 'text-zinc-400'">
-                                    {{ device.online ? "online" : "offline" }}
-                                </span>
-                            </TooltipContent>
-                        </Tooltip>
-                        <SidebarMenuButton v-else
-                            :is-active="route.path === `/devices/${device.id}`"
-                            @click="navigate(`/devices/${device.id}`)"
-                        >
-                            <span class="relative inline-flex">
-                                <component :is="iconMap[device.icon]" class="size-4" />
-                                <span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full" :class="device.online ? 'bg-green-500' : 'bg-zinc-400'" />
-                            </span>
-                            <span>{{ device.name }}</span>
                         </SidebarMenuButton>
                     </SidebarMenuItem>
                 </SidebarMenu>
